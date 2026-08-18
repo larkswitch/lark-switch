@@ -12,7 +12,13 @@ Official `lark-cli --profile` manages an **App configuration**, not "the person"
 
 It never stores Access Tokens or Refresh Tokens and does not reimplement Lark business APIs: OAuth, refresh and the OS keychain stay with official [`lark-cli`](https://github.com/larksuite/cli). larkswitch only isolates each `(App, User)` into its own config directory and decides who the next command runs as.
 
-![Tray switches the person; the next command picks up the new identity, in-flight commands keep theirs](docs/assets/switch.svg)
+```mermaid
+flowchart LR
+  tray["Tray<br/>Switch Zhang to Li<br/>Does not kill running commands"]
+  next["Next command<br/>lark-cli --account Li<br/>whoami → Li"]
+  running["Already running<br/>Started as Zhang<br/>Keeps Zhang until exit"]
+  tray --> next --> running
+```
 
 ## Installation
 

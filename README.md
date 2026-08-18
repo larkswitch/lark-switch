@@ -12,7 +12,13 @@
 
 它不保存 Access Token / Refresh Token，也不重写飞书业务 API：OAuth、刷新和钥匙串全部留在官方 [`lark-cli`](https://github.com/larksuite/cli)。larkswitch 只把每个 `(App, User)` 隔离成独立配置目录，并决定下一条命令用谁。
 
-![托盘切人，下一条命令换身份，正在跑的命令不变](docs/assets/switch.svg)
+```mermaid
+flowchart LR
+  tray["Tray<br/>Switch Zhang to Li<br/>Does not kill running commands"]
+  next["Next command<br/>lark-cli --account Li<br/>whoami → Li"]
+  running["Already running<br/>Started as Zhang<br/>Keeps Zhang until exit"]
+  tray --> next --> running
+```
 
 ## 安装
 
