@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
   - name: Security report
-    url: https://github.com/larkswitch/larkswitch/security/advisories/new
+    url: https://github.com/larkswitch/lark-switch/security/advisories/new
     about: Tokens, App Secrets, and credential-touching bugs. Never file these as public issues.

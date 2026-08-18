@@ -12,7 +12,7 @@ version = "0.2.0"
 edition = "2021"
 license = "MIT"
 rust-version = "1.81"
-repository = "https://github.com/larkswitch/larkswitch"
+repository = "https://github.com/larkswitch/lark-switch"
 
 [workspace.dependencies]
 anyhow = "1.0"

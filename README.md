@@ -1,12 +1,12 @@
-# larkswitch
+# lark-switch
 
 **Unofficial · not affiliated with ByteDance / Feishu / Lark.**
 
 飞书 / Lark 官方 CLI 的身份层：切的是**人**，不是 App。人类用托盘换人，Agent 每条命令指定一次身份。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/larkswitch/larkswitch?include_prereleases&label=release)](https://github.com/larkswitch/larkswitch/releases/latest)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-informational)](https://github.com/larkswitch/larkswitch/releases/latest)
+[![Release](https://img.shields.io/github/v/release/larkswitch/lark-switch?include_prereleases&label=release)](https://github.com/larkswitch/lark-switch/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-informational)](https://github.com/larkswitch/lark-switch/releases/latest)
 
 官方 `lark-cli --profile` 管的是 **App 配置**，不是「这个人」。同一个 App 下挂多个人、互不污染、随时换人——这是 larkswitch 存在的理由。
 
@@ -24,9 +24,9 @@ flowchart LR
 
 | 平台 | 形态 | 下载 |
 | --- | --- | --- |
-| Windows 10/11 x64 | 桌面端（托盘 + CLI） | [releases/latest](https://github.com/larkswitch/larkswitch/releases/latest) |
-| macOS Intel / Apple Silicon | 桌面端（托盘 + CLI） | [releases/latest](https://github.com/larkswitch/larkswitch/releases/latest) |
-| Linux x64 | CLI + Shim（无托盘） | [releases/latest](https://github.com/larkswitch/larkswitch/releases/latest) |
+| Windows 10/11 x64 | 桌面端（托盘 + CLI） | [releases/latest](https://github.com/larkswitch/lark-switch/releases/latest) |
+| macOS Intel / Apple Silicon | 桌面端（托盘 + CLI） | [releases/latest](https://github.com/larkswitch/lark-switch/releases/latest) |
+| Linux x64 | CLI + Shim（无托盘） | [releases/latest](https://github.com/larkswitch/lark-switch/releases/latest) |
 
 > **未签名 Alpha**：安装包没有代码签名，Windows SmartScreen / macOS Gatekeeper 可能拦截——这是**预期行为**，不是安装包被篡改。放行方法见 [FAQ](#faq)。不需要预装 Node.js / npm，`setup` 会自动下载并校验官方 CLI。
 

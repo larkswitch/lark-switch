@@ -1,12 +1,12 @@
-# larkswitch
+# lark-switch
 
 **Unofficial · not affiliated with ByteDance / Feishu / Lark.**
 
 The identity layer for the official Feishu / Lark CLI: it switches **people**, not apps. A tray for humans; one-shot identity for agents.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/larkswitch/larkswitch?include_prereleases&label=release)](https://github.com/larkswitch/larkswitch/releases/latest)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-informational)](https://github.com/larkswitch/larkswitch/releases/latest)
+[![Release](https://img.shields.io/github/v/release/larkswitch/lark-switch?include_prereleases&label=release)](https://github.com/larkswitch/lark-switch/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-informational)](https://github.com/larkswitch/lark-switch/releases/latest)
 
 Official `lark-cli --profile` manages an **App configuration**, not "the person". Multiple users under one App, isolated from each other, switchable at any time — that is why larkswitch exists.
 
@@ -24,9 +24,9 @@ flowchart LR
 
 | Platform | Form factor | Download |
 | --- | --- | --- |
-| Windows 10/11 x64 | Desktop app (tray + CLI) | [releases/latest](https://github.com/larkswitch/larkswitch/releases/latest) |
-| macOS Intel / Apple Silicon | Desktop app (tray + CLI) | [releases/latest](https://github.com/larkswitch/larkswitch/releases/latest) |
-| Linux x64 | CLI + shim (no tray) | [releases/latest](https://github.com/larkswitch/larkswitch/releases/latest) |
+| Windows 10/11 x64 | Desktop app (tray + CLI) | [releases/latest](https://github.com/larkswitch/lark-switch/releases/latest) |
+| macOS Intel / Apple Silicon | Desktop app (tray + CLI) | [releases/latest](https://github.com/larkswitch/lark-switch/releases/latest) |
+| Linux x64 | CLI + shim (no tray) | [releases/latest](https://github.com/larkswitch/lark-switch/releases/latest) |
 
 > **Unsigned alpha**: the installers are not code-signed, so Windows SmartScreen / macOS Gatekeeper may block them — that is **expected**, not a sign of tampering. See the [FAQ](#faq) for how to allow them. No Node.js / npm required; `setup` downloads and verifies the official CLI for you.
 
