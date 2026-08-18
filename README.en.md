@@ -1,169 +1,138 @@
-# lark-switch
+[简体中文](README.md) · [Docs](docs/) · [Download](https://github.com/larkswitch/larkswitch/releases/latest)
 
-**Unofficial · not affiliated with ByteDance / Feishu / Lark.**
+# larkswitch
 
-The identity layer for the official Feishu / Lark CLI: it switches **people**, not apps. A tray for humans; one-shot identity for agents.
+**Run many accounts under one Feishu/Lark App, and pick who each command runs as — no logging out and back in.**
 
+[![Release](https://img.shields.io/github/v/release/larkswitch/larkswitch?include_prereleases&label=release)](https://github.com/larkswitch/larkswitch/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/larkswitch/lark-switch?include_prereleases&label=release)](https://github.com/larkswitch/lark-switch/releases/latest)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-informational)](https://github.com/larkswitch/lark-switch/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-informational)](https://github.com/larkswitch/larkswitch/releases/latest)
 
-Official `lark-cli --profile` manages an **App configuration**, not "the person". Multiple users under one App, isolated from each other, switchable at any time — that is why larkswitch exists.
+<sub>Unofficial third-party tool. Not affiliated with ByteDance / Feishu / Lark.</sub>
 
-It never stores Access Tokens or Refresh Tokens and does not reimplement Lark business APIs: OAuth, refresh and the OS keychain stay with official [`lark-cli`](https://github.com/larksuite/cli). larkswitch only isolates each `(App, User)` into its own config directory and decides who the next command runs as.
+<!-- Replace with a 15-20s real screen recording before launch (see docs/assets/demo.tape),
+     640-800px wide, <3MB. Delete this comment and the switch.svg line once the GIF lands. -->
+![Switching from the tray affects only the next command; in-flight commands keep the identity they started with](docs/assets/switch.svg)
 
-```mermaid
-flowchart LR
-  tray["Tray<br/>Switch Zhang to Li<br/>Does not kill running commands"]
-  next["Next command<br/>lark-cli --account Li<br/>whoami → Li"]
-  running["Already running<br/>Started as Zhang<br/>Keeps Zhang until exit"]
-  tray --> next --> running
+<sub>What to watch: after the tray switches to Li Si, **newly started commands** run as Li Si while the **in-flight command** is still Zhang San.</sub>
+
+```bash
+# One identity per command; the global active account is untouched
+lark-cli --account alias:bot whoami                      # the bot account
+lark-cli --account alias:me  whoami                      # you
+lark-cli --account alias:me  calendar +agenda --as user
 ```
 
-## Installation
+## What is it?
 
-| Platform | Form factor | Download |
-| --- | --- | --- |
-| Windows 10/11 x64 | Desktop app (tray + CLI) | [releases/latest](https://github.com/larkswitch/lark-switch/releases/latest) |
-| macOS Intel / Apple Silicon | Desktop app (tray + CLI) | [releases/latest](https://github.com/larkswitch/lark-switch/releases/latest) |
-| Linux x64 | CLI + shim (no tray) | [releases/latest](https://github.com/larkswitch/lark-switch/releases/latest) |
+Official `lark-cli --profile` manages an **App configuration**. Since v1.0.5 it can manage several Apps, but **a single App ID still holds exactly one identity**.
 
-> **Unsigned alpha**: the installers are not code-signed, so Windows SmartScreen / macOS Gatekeeper may block them — that is **expected**, not a sign of tampering. See the [FAQ](#faq) for how to allow them. No Node.js / npm required; `setup` downloads and verifies the official CLI for you.
+Anyone building a Feishu/Lark app hits this wall: testing needs at least two accounts — one bot, one human. Consultants and agencies also hop between several customer tenants. Today's workaround is log out, log in, log out, log in.
+
+larkswitch uses the officially supported `LARKSUITE_CLI_CONFIG_DIR` to isolate every `(App, User)` pair into its own config directory, and decides who the next command runs as:
+
+- **One App, many people** — each account gets an isolated config directory; they never pollute each other.
+- **Per-command identity** — `--account` affects that one command only; the global active account does not move.
+- **In-flight commands never change identity** — identity is snapshotted when a command starts. Running several identities concurrently never crosses wires.
+- **Tokens never touched** — no Access / Refresh Token storage. OAuth, refresh and the OS keychain stay with official [`lark-cli`](https://github.com/larksuite/cli). See [docs/SECURITY.md](docs/SECURITY.md).
+- **PATH takeover off by default** — your existing `lark-cli` is untouched unless you explicitly pass `--path-takeover`.
 
 ## 30-second quickstart
 
-The control-plane command is `larkswitch` (`lpcctl` is a compatibility alias). If you already logged in with the official `lark-cli`:
+If you already logged in with the official `lark-cli`, three commands:
 
 ```bash
-larkswitch setup          # init: download & verify official lark-cli, install the shim. PATH untouched by default
-larkswitch import         # absorb the existing ~/.lark-cli config as your first person
+larkswitch setup          # install official lark-cli + the shim; PATH untouched by default
+larkswitch import         # absorb your existing ~/.lark-cli config as the first person
 larkswitch account list   # see who is here
 ```
 
 Then pick one:
 
 - **Humans**: open the desktop app and switch from the tray (or `larkswitch account switch <uuid>` for a persistent switch);
-- **Terminal / agents**: run a single command as one person, without touching the global active:
+- **Terminal / agents**: `lark-cli --account alias:zhangsan whoami` for a one-shot, without touching the global active.
+
+If you want a plain `lark-cli` in your terminal to route through this product, turn PATH takeover on explicitly: `larkswitch setup --path-takeover`.
+
+<details><summary><b>Download installers</b> (Windows / macOS with tray, Linux CLI-only)</summary>
+
+| Platform | Form factor | Download |
+| --- | --- | --- |
+| Windows 10/11 x64 | Desktop app (tray + CLI) | [releases/latest](https://github.com/larkswitch/larkswitch/releases/latest) |
+| macOS Intel / Apple Silicon | Desktop app (tray + CLI) | [releases/latest](https://github.com/larkswitch/larkswitch/releases/latest) |
+| Linux x64 | CLI + shim (no tray) | [releases/latest](https://github.com/larkswitch/larkswitch/releases/latest) |
+
+The installers are an unsigned alpha, so Windows SmartScreen / macOS Gatekeeper may block them — that is expected, not a sign of tampering. Windows: "More info" → "Run anyway". macOS: right-click the package and choose "Open", or allow it in System Settings.
+
+No Node.js / npm required; `setup` downloads and verifies the official CLI for you.
+</details>
+
+## For agents
+
+Hand [`skills/larkswitch/SKILL.md`](skills/larkswitch/SKILL.md) to Claude Code / Cursor / Codex and it knows how to pick people for you.
+
+> **Let the agent install it** — paste this to it:
+>
+> ```text
+> Install larkswitch (github.com/larkswitch/larkswitch), run `larkswitch setup` and
+> `larkswitch import`, then read skills/larkswitch/SKILL.md in the repo and register the skill.
+> From then on, when you act on Feishu/Lark for me, pick the identity with --account.
+> Never pick a person with the official --profile. If setup fails, follow the
+> "Build from source" section in docs/CLI.md.
+> ```
+
+Three rules: resolve first, then run; pick people with `--account`; **never pick a person with official `--profile`** — that is an App configuration, not "the person".
 
 ```bash
-lark-cli --account alias:zhangsan whoami
+larkswitch account search --q "Zhang"         # loose lookup
+larkswitch account resolve 'alias:zhangsan'   # strict: 0 or multiple matches error out, never guess
+lark-cli --account alias:zhangsan whoami      # one-shot execution
 ```
 
-If you want a plain `lark-cli` in your terminal to route through this product, turn PATH takeover on explicitly:
-
-```bash
-larkswitch setup --path-takeover
-```
-
-## For agents: one identity per command
-
-Hand [`skills/larkswitch/SKILL.md`](skills/larkswitch/SKILL.md) to Cursor / Claude Code / Codex. Three rules: resolve first, then run; pick people with `--account`; never pick a person with official `--profile` — that is an App configuration, not "the person".
-
-```bash
-larkswitch account search --q "Zhang"       # loose lookup
-larkswitch account resolve 'alias:zhangsan' # strict: 0 or multiple matches error out, never guess
-lark-cli --account alias:zhangsan whoami    # one-shot execution
-```
-
-Selector grammar (`resolve` and `--account` are identical; `search` is loose):
-
-- `id:<uuid>`, `alias:<alias>`
-- bare value: full UUID → exact alias → exact and unique displayName
-- App-scoped: `app:<appId or unique label>/<identity>`
-- no match → `LPC_ACCOUNT_NOT_FOUND`; multiple matches → `LPC_ACCOUNT_AMBIGUOUS`
+Selector grammar (`resolve` and `--account` are identical; `search` is loose): `id:<uuid>`, `alias:<alias>`, bare value (full UUID → exact alias → exact and unique displayName), App-scoped `app:<appId or unique label>/<identity>`. No match → `LPC_ACCOUNT_NOT_FOUND`; multiple matches → `LPC_ACCOUNT_AMBIGUOUS`.
 
 Precedence: leading `--account` (compat `--lpc-account`) > env `LARKSWITCH_ACCOUNT` (compat `LPC_ACCOUNT`) > current active. Only a leading run of argv is consumed; anything mid-argv or after `--` passes through to the official CLI untouched. Official `--profile` is never hijacked and passes through as-is.
 
-## Highlights
+## Why not X?
 
-- **One App, many people**: each `(App, User)` gets an isolated config directory; multiple accounts under one App never pollute each other.
-- **In-flight commands never change identity**: the identity is snapshotted when a command starts; tray switching only affects the **next** command.
-- **Tokens never touched**: no Access / Refresh Token storage; OAuth and the keychain stay with official lark-cli — see [docs/SECURITY.md](docs/SECURITY.md).
-- **PATH takeover off by default**: your existing `lark-cli` is untouched unless you explicitly pass `--path-takeover`.
+Legend: ✅ supported ｜ ⁉️ possible with significant manual effort ｜ ❌ not supported
+
+|  | Log out / log in | Official `--profile` | Two machines / two OS users | **larkswitch** |
+| --- | :---: | :---: | :---: | :---: |
+| Many people under one App | ⁉️ tens of seconds each time | ❌ one identity per App | ✅ | ✅ |
+| One identity per command, global untouched | ❌ | ❌ | ❌ | ✅ |
+| Concurrent identities never cross wires | ❌ | ❌ | ⁉️ | ✅ |
+| Switch from a tray | ❌ | ❌ | ❌ | ✅ |
+| You hold the tokens | — | — | — | ❌ all left to the official CLI |
+| Extra software to install | ✅ none | ✅ none | ❌ | ❌ yes |
+
+**When you should not use it**: if you have exactly one Feishu/Lark account and you do not build Feishu/Lark apps, plain `lark-cli` is enough — don't install this. larkswitch exists for people who need two or more identities under one App.
 
 ## FAQ
 
-### How is this different from official `--profile`?
-
-An official Profile is an **App configuration**: since v1.0.5 it can manage multiple Apps, but a single App ID still holds exactly one identity. larkswitch uses the officially supported `LARKSUITE_CLI_CONFIG_DIR` to give each account its own config directory, so one App can hold multiple people. App Secrets still live in the OS keychain via the official CLI, and user tokens are still managed by the official CLI per `(App ID, User Open ID)`.
-
-### The installer is blocked by the OS?
-
-Expected for an unsigned alpha. Windows: SmartScreen → "More info" → "Run anyway". macOS: right-click the package and choose "Open", or allow it in System Settings.
-
-### Why is there no tray on Linux?
+<details><summary>Why is there no tray on Linux?</summary>
 
 The Linux release ships CLI + shim: every control-plane command and the identity isolation work; the desktop tray is planned later.
+</details>
 
-### Where do state and backups live?
+<details><summary>Where do state and backups live?</summary>
 
 The state directory is decided by `LPC_HOME` (platform user-data directory when unset). The desktop app takes a file-level backup at startup and then every 6 hours into `LarkProfileConsoleBackups` under your Documents folder; deleting the program directory does not touch backups.
+</details>
 
-## Build from source
+<details><summary>Will it change my existing lark-cli?</summary>
 
-CLI and shim (Rust):
+Not by default. PATH takeover is an explicit `--path-takeover`; only `--takeover-npm` replaces the global npm entry. Undo with `larkswitch path remove`.
+</details>
 
-```bash
-cargo build --release -p lpcctl -p lpc-shim
-# artifacts: larkswitch (control plane) and lark-cli (shim)
-target/release/larkswitch setup --shim target/release/lark-cli
-```
+## Documentation
 
-Desktop app (Tauri v2, under `apps/desktop`, requires pnpm):
-
-```bash
-pnpm install
-pnpm tauri build
-```
-
-Release artifacts are produced by the CI three-platform matrix; a local build is fine for daily use.
-
-## `larkswitch` command reference
-
-`lpcctl` is a compatibility alias for `larkswitch` — the same control plane. Frequently used subcommands:
-
-| Command | What it does |
-| --- | --- |
-| `larkswitch setup` | Initialize: install official CLI + shim (`--cli-version` pins a version, `--shim` points at the shim source, `--path-takeover` enables PATH takeover) |
-| `larkswitch import` | Import an existing `~/.lark-cli` (or `--config-dir`) config as accounts |
-| `larkswitch runtime install` / `larkswitch runtime rollback` / `larkswitch runtime list` | Install / roll back / list official CLI versions |
-| `larkswitch app import` | Import an App with an existing App ID + Secret (`--secret-stdin` reads the secret from a pipe, not a terminal prompt) |
-| `larkswitch app import-config` | Import an App from an official config directory (`--label`, `--config-dir`) |
-| `larkswitch app create` | Create an App through the official interactive flow |
-| `larkswitch app list` / `larkswitch app remove` | List Apps / remove App metadata (official keychain untouched) |
-| `larkswitch app refresh-scopes` / `larkswitch app policy-all` / `larkswitch app policy-set` | Read live `userScopes` / set them all as the stable policy / set a policy manually (`--scopes a,b,c`) |
-| `larkswitch account login` / `larkswitch account reauthorize` | Add an account under an App / re-authorize an existing one (official OAuth page) |
-| `larkswitch account discover-configs` / `larkswitch account import-config` | Scan / import logged-in official config directories |
-| `larkswitch account list` / `larkswitch account search` | Compact account list (`--with-scopes`); loose search (`--q` keyword, `--app`, `--health`, `--scope`) |
-| `larkswitch account resolve` | Strictly resolve a unique account, same rules as `--account` |
-| `larkswitch account alias set` / `larkswitch account alias clear` | Set / clear an account alias |
-| `larkswitch account switch` / `larkswitch account check` / `larkswitch account remove` | Persistent switch / health check / remove an account and its isolated directory |
-| `larkswitch path install` / `larkswitch path repair` / `larkswitch path remove` | Install / repair PATH takeover (`--takeover-npm` also replaces the global npm entry) / undo |
-| `larkswitch snapshot` | Full JSON snapshot of accounts / Apps / in-flight commands |
-| `larkswitch ps` | List lark-cli commands currently holding identity leases |
-| `larkswitch doctor` | Local self-checks (`--share` emits a redacted report safe to paste) |
-| `larkswitch backup` / `larkswitch restore` | Manual backup / restore (`--list` lists snapshots, `--snapshot <id>` restores a specific one, neither restores the newest) |
-
-Recommended way to import an existing App (keeps the secret out of terminal history):
-
-```bash
-printf '%s\n' "$LARK_APP_SECRET" | \
-  larkswitch app import \
-  --label "Company Feishu" \
-  --app-id "$LARK_APP_ID" \
-  --secret-stdin
-```
-
-The security model (tokens never touched, secrets only transient in memory, backup policy) is detailed in [docs/SECURITY.md](docs/SECURITY.md).
-
-## Docs & license
-
-- [Product definition](docs/PRODUCT.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Security model](docs/SECURITY.md)
-- [Testing & release gates](docs/TESTING.md)
-- [Manual end-to-end testing](docs/MANUAL-E2E.md)
-- [Release process](docs/RELEASE.md)
-- [中文 README](README.md)
+- **[Full command reference →](docs/CLI.md)** (including build from source)
+- [Security model](docs/SECURITY.md) ｜ [Architecture](docs/ARCHITECTURE.md) ｜ [Product definition](docs/PRODUCT.md)
+- [Testing & release gates](docs/TESTING.md) ｜ [Manual end-to-end testing](docs/MANUAL-E2E.md) ｜ [Release process](docs/RELEASE.md)
 
 License: [MIT](LICENSE)
+
+---
+
+<sub>This is an unofficial third-party tool. It is not affiliated with, endorsed by, or sponsored by ByteDance / Feishu / Lark. Lark and Feishu are trademarks of ByteDance, used here descriptively only. This tool circumvents no authentication and neither stores nor parses user tokens; OAuth and the keychain are handled entirely by the official lark-cli.</sub>
