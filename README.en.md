@@ -71,6 +71,8 @@ xattr -dr com.apple.quarantine /Applications/larkswitch.app
 open /Applications/larkswitch.app
 ```
 
+Starting with v0.2.1, the macOS `.dmg` install window prints the same commands at the bottom — copy them after dragging to Applications.
+
 For "cannot verify the developer", right-click the `.dmg` → Open often works; still blocked or wrong chip? See the FAQ below.
 
 No Node.js / npm required; `setup` downloads and verifies the official CLI for you.

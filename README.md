@@ -71,6 +71,8 @@ xattr -dr com.apple.quarantine /Applications/larkswitch.app
 open /Applications/larkswitch.app
 ```
 
+从 v0.2.1 起，macOS 安装包（`.dmg`）窗口底部也会印上同样的命令，拖进 Applications 后照着抄即可。
+
 若只是「无法验证开发者」，右键 `.dmg` 选「打开」往往够用；仍被拦、或下错架构，见下方 FAQ。
 
 不需要预装 Node.js / npm，`setup` 会自动下载并校验官方 CLI。
