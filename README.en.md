@@ -125,6 +125,31 @@ The state directory is decided by `LPC_HOME` (platform user-data directory when 
 Not by default. PATH takeover is an explicit `--path-takeover`; only `--takeover-npm` replaces the global npm entry. Undo with `larkswitch path remove`.
 </details>
 
+<details><summary>macOS says "damaged" or blocks the app?</summary>
+
+**The installer is not actually corrupted** and Apple did not delete it. v0.2.0 is an **unsigned alpha** ([release notes](https://github.com/larkswitch/lark-switch/releases/tag/v0.2.0)); downloads from a browser/GitHub carry a quarantine flag. macOS sometimes shows **"larkswitch is damaged and can't be opened"** for unsigned apps — that is different from **"cannot verify the developer"**: the latter is often fixed by right-click → Open on the installer; **"damaged" usually means you must clear the quarantine attribute**.
+
+After install the app is `larkswitch.app` at `/Applications/larkswitch.app` (`productName` is `larkswitch` in `apps/desktop/src-tauri/tauri.conf.json`).
+
+Run once in Terminal (**no reboot needed**):
+
+```bash
+xattr -dr com.apple.quarantine /Applications/larkswitch.app
+open /Applications/larkswitch.app
+```
+
+If it is still blocked: **System Settings → Privacy & Security**, scroll down and choose **Open Anyway** or allow `larkswitch`.
+
+**Wrong architecture** can also fail to launch, but that usually crashes or says unsupported — not "damaged":
+
+| Your Mac | Download |
+| --- | --- |
+| Apple Silicon (M1/M2/M3…) | `larkswitch_0.2.0_aarch64.dmg` |
+| Intel | `larkswitch_0.2.0_x64.dmg` |
+
+Check chip: `uname -m` (`arm64` = Apple Silicon, `x86_64` = Intel).
+</details>
+
 ## Documentation
 
 - **[Full command reference →](docs/CLI.md)** (including build from source)

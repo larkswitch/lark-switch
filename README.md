@@ -124,6 +124,31 @@ Linux 的发布产物是 CLI + Shim：控制面命令与身份隔离全部可用
 默认不会。PATH 接管是显式的 `--path-takeover`，`--takeover-npm` 才会替换全局 npm 入口。撤销用 `larkswitch path remove`。
 </details>
 
+<details><summary>macOS 提示「已损坏，无法打开」或被系统拦截？</summary>
+
+**不是安装包真坏了**，也不是苹果删了文件。v0.2.0 是**未签名 Alpha**（[Release 说明](https://github.com/larkswitch/lark-switch/releases/tag/v0.2.0)），从浏览器/GitHub 下载会带上隔离标记（quarantine）。macOS 对未签名应用有时会显示「**已损坏，无法打开**」——这和「**无法验证开发者**」不是同一句：后者右键安装包选「打开」往往够用；**「已损坏」通常要去掉隔离属性**。
+
+安装后 App 名为 `larkswitch.app`，路径是 `/Applications/larkswitch.app`（`apps/desktop/src-tauri/tauri.conf.json` 里 `productName` 为 `larkswitch`）。
+
+在终端执行（只需一次，**不用重启**）：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/larkswitch.app
+open /Applications/larkswitch.app
+```
+
+若仍被拦：打开 **系统设置 → 隐私与安全性**，在页面底部找「仍要打开」或允许 `larkswitch`。
+
+**下错架构**也可能打不开，但更像闪退或提示不支持，而不是「已损坏」：
+
+| 你的 Mac | 应下载 |
+| --- | --- |
+| Apple Silicon（M1/M2/M3…） | `larkswitch_0.2.0_aarch64.dmg` |
+| Intel | `larkswitch_0.2.0_x64.dmg` |
+
+检查芯片：`uname -m`（`arm64` = Apple Silicon，`x86_64` = Intel）。
+</details>
+
 ## 文档
 
 - **[完整命令参考 →](docs/CLI.md)**（含从源码构建）
