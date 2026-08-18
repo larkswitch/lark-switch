@@ -31,7 +31,7 @@ jobs:
       - name: Tests
         run: cargo test -p lpc-core -p lpc-shim -p lpcctl
       - name: Real official CLI smoke
-        run: cargo test -p lpc-core --test official_cli_smoke -- --ignored --nocapture
+        run: cargo test -p lpc-core --test official_cli_smoke official_cli_binary_and_config_directory_isolation_are_real -- --ignored --nocapture
 
   frontend:
     name: Frontend production build

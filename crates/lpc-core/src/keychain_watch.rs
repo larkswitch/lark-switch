@@ -22,10 +22,16 @@ pub fn expected_keychain_slots(account_count: usize) -> usize {
 pub enum KeychainWatchKind {
     FirstSight,
     Unchanged,
-    Rose { from: usize, to: usize },
+    Rose {
+        from: usize,
+        to: usize,
+    },
     /// Mass deletion relative to the last observation. Not the same as a
     /// single official-CLI revocation of one dead refresh token.
-    Cliff { from: usize, to: usize },
+    Cliff {
+        from: usize,
+        to: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,7 +85,9 @@ pub fn classify_keychain_delta(
         None => KeychainWatchKind::FirstSight,
         Some(from) if current == from => KeychainWatchKind::Unchanged,
         Some(from) if current > from => KeychainWatchKind::Rose { from, to: current },
-        Some(from) if is_mass_cliff(from, current) => KeychainWatchKind::Cliff { from, to: current },
+        Some(from) if is_mass_cliff(from, current) => {
+            KeychainWatchKind::Cliff { from, to: current }
+        }
         Some(_) => KeychainWatchKind::Unchanged,
     };
     KeychainWatchEvent {
@@ -250,7 +258,10 @@ mod tests {
     #[test]
     fn force_verify_only_reauth_on_rise() {
         use crate::AccountHealth;
-        assert!(force_verify_for_health(true, &AccountHealth::ReauthRequired));
+        assert!(force_verify_for_health(
+            true,
+            &AccountHealth::ReauthRequired
+        ));
         assert!(!force_verify_for_health(true, &AccountHealth::Ready));
         assert!(!force_verify_for_health(
             false,

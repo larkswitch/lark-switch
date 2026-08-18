@@ -699,7 +699,9 @@ impl AccountService {
     }
 
     pub fn refresh_account_health(&self, account_id: Uuid) -> Result<AccountRecord> {
-        Ok(self.refresh_account_health_with(account_id, false)?.account())
+        Ok(self
+            .refresh_account_health_with(account_id, false)?
+            .account())
     }
 
     pub fn refresh_account_health_with(

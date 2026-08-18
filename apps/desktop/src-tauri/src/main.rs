@@ -285,7 +285,9 @@ fn ensure_installed_autostart(app: &AppHandle) -> Result<(), String> {
     if ensure_autostart_exe_is_install(&exe).is_err() {
         return Ok(());
     }
-    app.autolaunch().enable().map_err(|error| error.to_string())?;
+    app.autolaunch()
+        .enable()
+        .map_err(|error| error.to_string())?;
     if let Err(error) = pin_user_run_autostart(&exe, &["--hidden"]) {
         tracing::error!(%error, "failed to pin HKCU Run autostart to the installed exe");
     }
@@ -611,9 +613,9 @@ fn check_account(
                 .map_err(error_text)?
             {
                 HealthRefreshOutcome::Updated(account) => Ok(account),
-                HealthRefreshOutcome::SkippedBusy(_) => Err(
-                    "钥匙串正被其他命令占用，这次没有改体检结果。稍后再试。".into(),
-                ),
+                HealthRefreshOutcome::SkippedBusy(_) => {
+                    Err("钥匙串正被其他命令占用，这次没有改体检结果。稍后再试。".into())
+                }
             }
         }
     }

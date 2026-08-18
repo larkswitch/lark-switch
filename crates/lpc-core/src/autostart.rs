@@ -4,7 +4,9 @@
 //! cargo target is refused, so the Run key can stay pointed at an older copy.
 //! Pinning rewrites it to the installed path when the installed exe starts.
 
-use crate::error::{LpcError, Result};
+#[cfg(windows)]
+use crate::error::LpcError;
+use crate::error::Result;
 use std::path::{Path, PathBuf};
 
 pub const DESKTOP_EXE_FILE_NAME: &str = "lark-profile-console.exe";
@@ -79,8 +81,10 @@ pub fn run_command_for_exe(exe: &Path, extra_args: &[&str]) -> String {
 pub fn command_targets_desktop(command: &str) -> bool {
     exe_from_run_command(command)
         .and_then(|path| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().eq_ignore_ascii_case(DESKTOP_EXE_FILE_NAME))
+            path.file_name().map(|name| {
+                name.to_string_lossy()
+                    .eq_ignore_ascii_case(DESKTOP_EXE_FILE_NAME)
+            })
         })
         .unwrap_or(false)
 }
@@ -110,7 +114,10 @@ pub fn list_desktop_run_entries() -> Result<Vec<AutostartRunEntry>> {
         Err(_) => return Ok(Vec::new()),
     };
     let mut entries = Vec::new();
-    for name in key.enum_values().filter_map(|item| item.ok().map(|(name, _)| name)) {
+    for name in key
+        .enum_values()
+        .filter_map(|item| item.ok().map(|(name, _)| name))
+    {
         let command: String = match key.get_value(&name) {
             Ok(value) => value,
             Err(_) => continue,
@@ -230,9 +237,8 @@ mod tests {
 
     #[test]
     fn install_match_rejects_cargo_target() {
-        let expected = Path::new(
-            r"C:\Users\me\AppData\Local\Lark Profile Console\lark-profile-console.exe",
-        );
+        let expected =
+            Path::new(r"C:\Users\me\AppData\Local\Lark Profile Console\lark-profile-console.exe");
         let cargo = AutostartRunEntry {
             value_name: AUTOSTART_VALUE_NAME.into(),
             command: r#""D:\repo\target\release\lark-profile-console.exe" --hidden"#.into(),

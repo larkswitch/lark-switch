@@ -105,7 +105,11 @@ pub fn run_diagnostics_with(store: &StateStore, level: RedactionLevel) -> Result
         false,
     )
     .ok();
-    checks.push(keychain_slot_check(&keychain, watch.as_ref(), account_count));
+    checks.push(keychain_slot_check(
+        &keychain,
+        watch.as_ref(),
+        account_count,
+    ));
 
     checks.push(autostart_target_check());
 
@@ -171,7 +175,9 @@ fn keychain_slot_check(
                 id: "official_cli_keychain".into(),
                 status: DiagnosticStatus::Fail,
                 summary: format!("Official CLI keychain dropped from {from} to {to} slots"),
-                detail: event.cliff_message().unwrap_or_else(|| keychain.detail.clone()),
+                detail: event
+                    .cliff_message()
+                    .unwrap_or_else(|| keychain.detail.clone()),
             };
         }
         if event.deficit {
@@ -267,10 +273,10 @@ fn format_autostart_entries(entries: &[crate::autostart::AutostartRunEntry]) -> 
             format!(
                 "{} => {}",
                 entry.value_name,
-                entry.exe_path.as_ref().map_or_else(
-                    || entry.command.clone(),
-                    |path| path.display().to_string()
-                )
+                entry
+                    .exe_path
+                    .as_ref()
+                    .map_or_else(|| entry.command.clone(), |path| path.display().to_string())
             )
         })
         .collect::<Vec<_>>()
@@ -772,9 +778,8 @@ mod tests {
 
     #[test]
     fn autostart_cargo_target_fails_the_diagnostic() {
-        let expected = Path::new(
-            r"C:\Users\me\AppData\Local\Lark Profile Console\lark-profile-console.exe",
-        );
+        let expected =
+            Path::new(r"C:\Users\me\AppData\Local\Lark Profile Console\lark-profile-console.exe");
         let cargo = crate::autostart::AutostartRunEntry {
             value_name: crate::autostart::AUTOSTART_VALUE_NAME.into(),
             command: r#""D:\repo\target\release\lark-profile-console.exe" --hidden"#.into(),
@@ -782,7 +787,12 @@ mod tests {
                 r"D:\repo\target\release\lark-profile-console.exe",
             )),
         };
-        assert!(crate::autostart::autostart_uses_cargo_target(&[cargo.clone()]));
-        assert!(!crate::autostart::autostart_points_at_install(&[cargo], expected));
+        assert!(crate::autostart::autostart_uses_cargo_target(&[
+            cargo.clone()
+        ]));
+        assert!(!crate::autostart::autostart_points_at_install(
+            &[cargo],
+            expected
+        ));
     }
 }
