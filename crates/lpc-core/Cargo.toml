@@ -1,0 +1,46 @@
+[package]
+name = "lpc-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+directories.workspace = true
+fs2.workspace = true
+hex.workspace = true
+once_cell.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+shell-words.workspace = true
+sysinfo.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+wait-timeout.workspace = true
+walkdir.workspace = true
+zeroize.workspace = true
+zip.workspace = true
+flate2.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Environment",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+pretty_assertions = "1.4"

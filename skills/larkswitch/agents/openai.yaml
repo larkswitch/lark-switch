@@ -1,0 +1,4 @@
+interface:
+  display_name: "larkswitch"
+  short_description: "Route Lark commands through the intended person, not an App profile"
+  default_prompt: "Use $larkswitch to resolve the intended Feishu/Lark person and run lark-cli --account without changing the default account."

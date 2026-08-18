@@ -1,0 +1,28 @@
+name: Bug
+description: A user-visible failure, with the rollback path
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Do not paste tokens, App Secrets, OAuth URLs, or unredacted doctor output. Use `larkswitch doctor --share`.
+  - type: textarea
+    id: result
+    attributes:
+      label: What did you expect, and what happened?
+    validations:
+      required: true
+  - type: textarea
+    id: rollback
+    attributes:
+      label: Failure / rollback path
+      description: What state is the machine in now, and how can it be undone?
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options: [Windows, macOS, Linux]
+    validations:
+      required: true

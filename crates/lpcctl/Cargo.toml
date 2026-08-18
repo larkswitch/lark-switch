@@ -1,0 +1,27 @@
+[package]
+name = "lpcctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "lpcctl"
+path = "src/main.rs"
+
+[[bin]]
+name = "larkswitch"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+lpc-core = { path = "../lpc-core" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+rpassword = "7.3"
+open = "5.3"
+
+[dev-dependencies]
+tempfile.workspace = true

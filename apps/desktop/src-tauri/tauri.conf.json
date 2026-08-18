@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "larkswitch",
+  "version": "0.2.0",
+  "identifier": "dev.larkswitch.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "larkswitch",
+        "width": 1080,
+        "height": 760,
+        "minWidth": 900,
+        "minHeight": 620,
+        "center": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: blob:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [],
+    "publisher": "larkswitch",
+    "shortDescription": "Safe multi-App, multi-user control plane for the official Lark CLI",
+    "longDescription": "Manage multiple Lark/Feishu Apps and user accounts, switch the global account from the system tray, and route every lark-cli invocation through the official CLI without storing OAuth tokens.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

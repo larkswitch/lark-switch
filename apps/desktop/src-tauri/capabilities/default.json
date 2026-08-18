@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default permissions for the desktop console",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "clipboard-manager:allow-write-text"
+  ]
+}

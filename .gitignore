@@ -1,0 +1,26 @@
+/target
+/reference
+/.codegraph
+**/node_modules
+**/dist
+**/.tauri
+*.log
+.DS_Store
+Thumbs.db
+.env
+.env.*
+!.env.example
+artifacts/
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/tauri.sidecars.conf.json
+
+# Local MCP tool schema dumps — machine-specific, unrelated to LPC
+/mcps
+# Local workspace registry of an external tool; contains absolute machine paths
+/data/workspaces.json
+# Whole runtime data dir is machine-local state — never publish it
+/data/
+# Registry snapshots may embed machine/user identifiers
+**/*.reg
+**/__pycache__
+*.pyc

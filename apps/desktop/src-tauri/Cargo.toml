@@ -1,0 +1,27 @@
+[package]
+name = "lark-profile-console-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "lark-profile-console"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+lpc-core = { path = "../../../crates/lpc-core" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+tauri = { version = "2.0", features = ["tray-icon"] }
+tauri-plugin-clipboard-manager = "2.0"
+tauri-plugin-opener = "2.0"
+tauri-plugin-autostart = "2.0"
+
+[dev-dependencies]
+tempfile.workspace = true

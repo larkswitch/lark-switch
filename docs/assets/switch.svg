@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 200" role="img" aria-label="larkswitch switches the next lark-cli command to another person while a running command keeps its launch identity">
+  <style>
+    .box { fill: #f6f3ee; stroke: #2b2118; stroke-width: 2; }
+    .title { font: 700 16px ui-sans-serif, system-ui, sans-serif; fill: #2b2118; }
+    .body { font: 13px ui-sans-serif, system-ui, sans-serif; fill: #5c5146; }
+    .arrow { stroke: #2b2118; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#2b2118"/>
+    </marker>
+  </defs>
+  <rect class="box" x="16" y="36" width="180" height="128" rx="12"/>
+  <text class="title" x="32" y="72">Tray</text>
+  <text class="body" x="32" y="100">Switch  	 � N�</text>
+  <text class="body" x="32" y="122">Does not kill running</text>
+  <text class="body" x="32" y="144">commands</text>
+
+  <path class="arrow" d="M206,100 H268"/>
+
+  <rect class="box" x="276" y="36" width="220" height="128" rx="12"/>
+  <text class="title" x="292" y="72">Next command</text>
+  <text class="body" x="292" y="100">lark-cli --account N�</text>
+  <text class="body" x="292" y="122">whoami � N�</text>
+
+  <path class="arrow" d="M506,100 H568"/>
+
+  <rect class="box" x="576" y="36" width="248" height="128" rx="12"/>
+  <text class="title" x="592" y="72">Already running</text>
+  <text class="body" x="592" y="100">Started as  	</text>
+  <text class="body" x="592" y="122">Keeps  	 until exit</text>
+</svg>

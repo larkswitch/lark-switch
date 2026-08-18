@@ -1,0 +1,123 @@
+name: Build desktop artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Create/update the GitHub release for a v* tag
+        required: false
+        type: boolean
+        default: false
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - label: macOS Intel
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+          - label: macOS Apple Silicon
+            os: macos-latest
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: apps/desktop
+      - name: Build sidecars
+        run: cargo build --release --target ${{ matrix.target }} -p lpcctl -p lpc-shim
+      - name: Prepare sidecars
+        run: python scripts/prepare-sidecars.py ${{ matrix.target }}
+      - name: Build Tauri bundle
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: pnpm tauri
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.sidecars.conf.json --ci
+          tagName: ${{ (github.event_name == 'push' || inputs.publish) && github.ref_name || '' }}
+          releaseName: larkswitch ${{ github.ref_name }}
+          releaseDraft: true
+          prerelease: true
+      - name: Preserve macOS app permissions
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_dir="target/${{ matrix.target }}/release/bundle"
+          while IFS= read -r -d '' app; do
+            ditto -c -k --sequesterRsrc --keepParent "$app" "${app}.zip"
+          done < <(find "$bundle_dir" -type d -name '*.app' -print0)
+      - name: Upload Windows bundles
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: larkswitch-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/bundle/**/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload macOS bundles
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: larkswitch-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/bundle/**/*.dmg
+            target/${{ matrix.target }}/release/bundle/**/*.app.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-cli:
+    name: Linux CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p lpcctl -p lpc-shim
+      - name: Stage CLI artifacts
+        run: |
+          mkdir -p dist/linux
+          cp target/release/larkswitch dist/linux/
+          cp target/release/lpcctl dist/linux/
+          cp target/release/lark-cli dist/linux/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: larkswitch-linux-x64-cli
+          path: dist/linux/*
+          if-no-files-found: error
+          retention-days: 14

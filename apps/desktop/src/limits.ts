@@ -1,0 +1,1 @@
+export const MAX_SINGLE_AUTH_SCOPES = 250;
