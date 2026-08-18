@@ -17,6 +17,7 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(windows)]
 const MAX_RETAINED_KEYCHAIN_BACKUPS: usize = 240;
 
 #[derive(Debug, Clone, Serialize)]
@@ -372,6 +373,7 @@ fn escape_reg_token(input: &str) -> String {
     input.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+#[cfg(windows)]
 fn prune_old_keychain_backups(dir: &Path) -> Result<()> {
     if !dir.exists() {
         return Ok(());
@@ -398,6 +400,7 @@ fn prune_old_keychain_backups(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(windows, test))]
 fn sanitize_reason(reason: &str) -> String {
     let sanitized = reason
         .chars()

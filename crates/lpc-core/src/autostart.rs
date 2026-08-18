@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 pub const DESKTOP_EXE_FILE_NAME: &str = "lark-profile-console.exe";
 pub const AUTOSTART_VALUE_NAME: &str = "Lark Profile Console";
+#[cfg(windows)]
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 
 pub fn is_cargo_target_build_exe(path: &Path) -> bool {
