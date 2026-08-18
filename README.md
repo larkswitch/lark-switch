@@ -62,7 +62,16 @@ larkswitch account list   # 看看现在有谁
 | macOS Intel / Apple Silicon | 桌面端（托盘 + CLI） | [releases/latest](https://github.com/larkswitch/larkswitch/releases/latest) |
 | Linux x64 | CLI + Shim（无托盘） | [releases/latest](https://github.com/larkswitch/larkswitch/releases/latest) |
 
-安装包是未签名 Alpha，Windows SmartScreen / macOS Gatekeeper 可能拦截——这是预期行为，不是安装包被篡改。Windows 选「更多信息 → 仍要运行」；macOS 右键安装包选「打开」，或在系统设置里允许。
+安装包是未签名 Alpha，Windows SmartScreen / macOS Gatekeeper 可能拦截——这是预期行为，不是安装包被篡改。Windows 选「更多信息 → 仍要运行」。
+
+**macOS 若提示「已损坏，无法打开」**：不是真坏了，是苹果给未签名下载打的隔离标记。安装后打开「终端」，复制下面两行执行（只需一次，**不用重启**）：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/larkswitch.app
+open /Applications/larkswitch.app
+```
+
+若只是「无法验证开发者」，右键 `.dmg` 选「打开」往往够用；仍被拦、或下错架构，见下方 FAQ。
 
 不需要预装 Node.js / npm，`setup` 会自动下载并校验官方 CLI。
 </details>

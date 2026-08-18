@@ -62,7 +62,16 @@ If you want a plain `lark-cli` in your terminal to route through this product, t
 | macOS Intel / Apple Silicon | Desktop app (tray + CLI) | [releases/latest](https://github.com/larkswitch/larkswitch/releases/latest) |
 | Linux x64 | CLI + shim (no tray) | [releases/latest](https://github.com/larkswitch/larkswitch/releases/latest) |
 
-The installers are an unsigned alpha, so Windows SmartScreen / macOS Gatekeeper may block them — that is expected, not a sign of tampering. Windows: "More info" → "Run anyway". macOS: right-click the package and choose "Open", or allow it in System Settings.
+The installers are an unsigned alpha, so Windows SmartScreen / macOS Gatekeeper may block them — that is expected, not a sign of tampering. Windows: "More info" → "Run anyway".
+
+**If macOS says "damaged and can't be opened"**: the app is not corrupted — Apple quarantined the unsigned download. After installing, open **Terminal**, copy and run (once, **no reboot**):
+
+```bash
+xattr -dr com.apple.quarantine /Applications/larkswitch.app
+open /Applications/larkswitch.app
+```
+
+For "cannot verify the developer", right-click the `.dmg` → Open often works; still blocked or wrong chip? See the FAQ below.
 
 No Node.js / npm required; `setup` downloads and verifies the official CLI for you.
 </details>
