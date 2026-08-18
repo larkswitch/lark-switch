@@ -12,7 +12,7 @@
   </defs>
   <rect class="box" x="16" y="36" width="180" height="128" rx="12"/>
   <text class="title" x="32" y="72">Tray</text>
-  <text class="body" x="32" y="100">Switch  	 � N�</text>
+  <text class="body" x="32" y="100">Switch Zhang to Li</text>
   <text class="body" x="32" y="122">Does not kill running</text>
   <text class="body" x="32" y="144">commands</text>
 
@@ -20,13 +20,13 @@
 
   <rect class="box" x="276" y="36" width="220" height="128" rx="12"/>
   <text class="title" x="292" y="72">Next command</text>
-  <text class="body" x="292" y="100">lark-cli --account N�</text>
-  <text class="body" x="292" y="122">whoami � N�</text>
-
-  <path class="arrow" d="M506,100 H568"/>
+  <text class="body" x="292" y="100">lark-cli --account Li</text>
+  <text class="body" x="292" y="122">whoami -&gt; Li</text>
 
   <rect class="box" x="576" y="36" width="248" height="128" rx="12"/>
   <text class="title" x="592" y="72">Already running</text>
-  <text class="body" x="592" y="100">Started as  	</text>
-  <text class="body" x="592" y="122">Keeps  	 until exit</text>
+  <text class="body" x="592" y="100">Started as Zhang</text>
+  <text class="body" x="592" y="122">Keeps Zhang until exit</text>
+
+  <path class="arrow" d="M506,100 H568"/>
 </svg>
