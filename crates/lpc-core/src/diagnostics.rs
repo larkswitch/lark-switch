@@ -692,6 +692,7 @@ mod tests {
         assert!(check.detail.contains("desktop app inherited an older PATH"));
     }
 
+    #[cfg(windows)]
     #[test]
     fn windows_diagnostics_warn_when_explicit_cmd_and_ps1_bypass_the_managed_bin() {
         let expected = PathBuf::from("C:\\LPC\\bin\\lark-cli.exe");
@@ -776,6 +777,7 @@ mod tests {
         assert_eq!(check.status, DiagnosticStatus::Pass);
     }
 
+    #[cfg(windows)]
     #[test]
     fn autostart_cargo_target_fails_the_diagnostic() {
         let expected =

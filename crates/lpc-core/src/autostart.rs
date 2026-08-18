@@ -212,6 +212,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn detects_desktop_command_by_file_name() {
         assert!(command_targets_desktop(
@@ -220,6 +221,7 @@ mod tests {
         assert!(!command_targets_desktop(r#""C:\Other\foo.exe""#));
     }
 
+    #[cfg(windows)]
     #[test]
     fn cargo_target_and_install_paths() {
         assert!(is_cargo_target_build_exe(Path::new(
@@ -236,6 +238,7 @@ mod tests {
         )));
     }
 
+    #[cfg(windows)]
     #[test]
     fn install_match_rejects_cargo_target() {
         let expected =
