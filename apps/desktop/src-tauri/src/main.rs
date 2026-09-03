@@ -788,11 +788,10 @@ fn repair_managed_route(store: &StateStore) -> Result<(), String> {
         "The packaged lark-cli shim is missing beside the desktop executable".to_owned()
     })?;
     install_shim(&source, paths)?;
-    if store.path_takeover_enabled().unwrap_or(false) {
-        PathTakeover::new(paths.clone())
-            .install()
-            .map_err(error_text)?;
-    }
+    store.set_path_takeover_enabled(true).map_err(error_text)?;
+    PathTakeover::new(paths.clone())
+        .install()
+        .map_err(error_text)?;
     Ok(())
 }
 
@@ -937,6 +936,13 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            if let Err(error) = lpc_core::enforce_msix_shim_policy() {
+                show_blocking_message(
+                    "larkswitch — 已阻止影子凭据环境",
+                    "当前进程带有 MSIX/AppX 包身份，会把飞书凭据写入隔离的影子注册表。\n\n请从开始菜单的 larkswitch 或 Windows Terminal 启动安装版。",
+                );
+                return Err(std::io::Error::other(error.to_string()).into());
+            }
             ensure_installed_autostart(app.handle()).map_err(std::io::Error::other)?;
             let paths =
                 AppPaths::discover().map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -1114,6 +1120,9 @@ fn main() {
             let health_app = app.handle().clone();
             std::thread::spawn(move || loop {
                 let state = health_app.state::<DesktopState>();
+                if let Err(error) = repair_managed_route(&state.store) {
+                    tracing::error!(%error, "scheduled managed route repair failed");
+                }
                 let service = match state.services.try_lock() {
                     Ok(services) => services.account.clone(),
                     Err(_) => {

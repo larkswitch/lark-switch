@@ -160,6 +160,43 @@ fn keychain_key_itself_is_never_deleted_or_recreated() {
     );
 }
 
+#[test]
+fn shim_never_fails_open_when_the_keychain_lock_is_busy() {
+    let root = common::repo_root();
+    let shim = std::fs::read_to_string(root.join("crates/lpc-shim/src/main.rs"))
+        .expect("read lpc shim source");
+
+    assert!(
+        shim.contains(".ok_or(LpcError::CliKeychainBusy)?"),
+        "the shim must reject a command when the shared keychain lock times out"
+    );
+    assert!(
+        !shim.contains("仍将执行命令"),
+        "the shim must never continue without the shared keychain lock"
+    );
+}
+
+#[test]
+fn desktop_blocks_msix_before_touching_autostart_or_credentials() {
+    let root = common::repo_root();
+    let desktop = std::fs::read_to_string(root.join("apps/desktop/src-tauri/src/main.rs"))
+        .expect("read desktop source");
+    let guard = desktop
+        .find("enforce_msix_shim_policy()")
+        .expect("desktop must enforce the MSIX credential policy");
+    let autostart = desktop
+        .find("ensure_installed_autostart(app.handle())")
+        .expect("desktop startup marker");
+    let backup = desktop
+        .find("run_credential_backup(&paths, \"startup\")")
+        .expect("credential backup marker");
+
+    assert!(
+        guard < autostart && guard < backup,
+        "MSIX guard must run before startup writes"
+    );
+}
+
 fn scanned_files(root: &std::path::Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = SCANNED_SOURCE_DIRS
         .iter()

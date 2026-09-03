@@ -50,7 +50,7 @@ test('formats a full lark-cli command with a visible placeholder', () => {
   const named = account({ id: '11111111-1111-1111-1111-111111111111', displayName: 'Alice', alias: 'work' });
   assert.equal(
     accountCommand(named, [named]),
-    `lark-cli --account alias:work ${ACCOUNT_COMMAND_PLACEHOLDER}`,
+    `lark-cli --lpc-account alias:work ${ACCOUNT_COMMAND_PLACEHOLDER}`,
   );
 });
 

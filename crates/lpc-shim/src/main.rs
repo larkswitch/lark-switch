@@ -61,12 +61,8 @@ fn run() -> lpc_core::Result<i32> {
         return Err(LpcError::RuntimeRecursion);
     }
 
-    let keychain_lock = try_acquire_cli_keychain_lock(&paths, Duration::from_secs(30))?;
-    if keychain_lock.is_none() {
-        eprintln!(
-            "[LPC_CLI_KEYCHAIN_LOCK] 警告：无法在 30 秒内获取共享 keychain 锁，仍将执行命令；并发刷新可能导致凭证损坏。"
-        );
-    }
+    let keychain_lock = try_acquire_cli_keychain_lock(&paths, Duration::from_secs(30))?
+        .ok_or(LpcError::CliKeychainBusy)?;
 
     let status = Command::new(&managed)
         .args(&parsed.forwarded)

@@ -92,7 +92,7 @@ The initial budgets are conservative and configurable, not represented as platfo
 
 ## PATH takeover
 
-PATH takeover is **off by default**. `larkswitch setup --path-takeover` or `larkswitch path install` prepends the shim directory. `larkswitch path repair --takeover-npm` is a separate, explicit Windows step that replaces a global npm `lark-cli.exe`.
+Setup and the desktop app keep the managed shim first on PATH. They also replace a global npm package `lark-cli.exe` with the managed shim so it cannot bypass routing or the shared keychain lock. `larkswitch path remove` is reserved for explicit uninstall; a running desktop app restores the secure route.
 
 - Windows: prepend one exact user PATH entry in `HKCU\\Environment`; broadcast `WM_SETTINGCHANGE`; uninstall removes only that exact entry.
 - macOS / Linux: write a marked block to the current Shell's login and interactive startup files; uninstall removes only the marked block.

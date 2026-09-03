@@ -29,14 +29,14 @@ struct Cli {
 enum Command {
     /// Initialize local state, install the official CLI and the product shim.
     ///
-    /// PATH takeover is off by default. Pass `--path-takeover` to prepend the
-    /// shim directory so new terminals resolve `lark-cli` to this product.
+    /// PATH and the global npm command route are always managed so every
+    /// `lark-cli` invocation crosses the account router and keychain lock.
     Setup {
         #[arg(long, default_value = lpc_core::SUPPORTED_CLI_VERSION)]
         cli_version: String,
         #[arg(long)]
         path_takeover: bool,
-        /// Deprecated compatibility flag: PATH takeover is already off by default.
+        /// Deprecated compatibility flag; secure routing can no longer be disabled.
         #[arg(long, hide = true)]
         no_path_takeover: bool,
         #[arg(long)]
@@ -210,7 +210,7 @@ enum PathCommand {
     Install,
     /// Reinstall the managed shim/forwarders and restore PATH takeover.
     Repair {
-        /// Replace the global npm `lark-cli.exe` with the managed shim (Windows).
+        /// Compatibility flag; Windows repair now always closes this bypass.
         #[arg(long)]
         takeover_npm: bool,
     },
@@ -286,17 +286,10 @@ fn run(cli: Cli) -> lpc_core::Result<()> {
                 )
             })?;
             install_shim(&shim_source, &paths, ShimInstallOptions::default())?;
-            let take_over_path = path_takeover && !no_path_takeover;
-            if take_over_path {
-                store.set_path_takeover_enabled(true)?;
-                print_json(&PathTakeover::new(paths).install()?)?;
-            }
+            let _legacy_flags = (path_takeover, no_path_takeover);
+            store.set_path_takeover_enabled(true)?;
+            print_json(&PathTakeover::new(paths).install()?)?;
             println!("Managed official CLI: {}", executable.display());
-            if !take_over_path {
-                println!(
-                    "PATH takeover is off. Agents should call this shim with --account, or pass --path-takeover."
-                );
-            }
         }
         Command::Import { config_dir, label } => {
             store.initialize()?;
@@ -536,6 +529,12 @@ fn run(cli: Cli) -> lpc_core::Result<()> {
             let takeover = PathTakeover::new(paths.clone());
             match command {
                 PathCommand::Install => {
+                    let shim_source = find_sibling_shim().ok_or_else(|| {
+                        lpc_core::LpcError::Internal(
+                            "cannot locate the lark-cli shim beside larkswitch/lpcctl".into(),
+                        )
+                    })?;
+                    install_shim(&shim_source, &paths, ShimInstallOptions::default())?;
                     store.set_path_takeover_enabled(true)?;
                     print_json(&takeover.install()?)?;
                 }
@@ -545,14 +544,18 @@ fn run(cli: Cli) -> lpc_core::Result<()> {
                             "cannot locate the lark-cli shim beside larkswitch/lpcctl".into(),
                         )
                     })?;
-                    let shim =
-                        install_shim(&shim_source, &paths, ShimInstallOptions { takeover_npm })?;
+                    let shim = install_shim(
+                        &shim_source,
+                        &paths,
+                        ShimInstallOptions { takeover_npm: true },
+                    )?;
                     store.set_path_takeover_enabled(true)?;
                     let path = takeover.install()?;
                     print_json(&serde_json::json!({
                         "shim": shim,
                         "path": path,
-                        "takeoverNpm": takeover_npm,
+                        "takeoverNpm": true,
+                        "takeoverRequested": takeover_npm,
                     }))?;
                 }
                 PathCommand::Remove => {
@@ -791,7 +794,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_does_not_take_over_path_by_default() {
+    fn setup_keeps_legacy_path_flags_parseable() {
         let cli = Cli::try_parse_from(["larkswitch", "setup"]).unwrap();
         match cli.command {
             super::Command::Setup {
@@ -813,7 +816,7 @@ mod tests {
     }
 
     #[test]
-    fn path_repair_takeover_npm_is_opt_in() {
+    fn path_repair_accepts_the_legacy_takeover_npm_flag() {
         let cli = Cli::try_parse_from(["larkswitch", "path", "repair"]).unwrap();
         match cli.command {
             super::Command::Path {

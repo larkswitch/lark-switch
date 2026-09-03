@@ -25,8 +25,9 @@ test('settings exposes autostart while desktop enforces background refresh lifec
   assert.match(settingsSource, /copy\.settings\.title/);
   assert.match(settingsSource, /aria-label=\{copy\.settings\.autostart\}/);
   assert.match(settingsSource, /api\.setAutostart\(enabled\)/);
-  assert.match(settingsSource, /api\.installPathTakeover\(\)/);
-  assert.match(settingsSource, /api\.removePathTakeover\(\)/);
+  assert.match(copySource, /安全路由已强制开启/);
+  assert.match(settingsSource, /aria-label=\{copy\.settings\.pathTakeover\}[\s\S]*?checked[\s\S]*?disabled/);
+  assert.doesNotMatch(settingsSource, /api\.removePathTakeover\(\)/);
   assert.match(settingsSource, /setThemeMode\(/);
   assert.match(source, /<SettingsPage data=\{snapshot\} onReload=\{reload\} \/>/);
   assert.match(settingsSource, /api\.runtimeIdentity\(\)/);

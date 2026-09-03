@@ -12,18 +12,24 @@ const POWERSHELL_FORWARDER: &[u8] = b"& (Join-Path $PSScriptRoot 'lark-cli.exe')
 /// forwarders that prevent callers of `lark-cli.cmd` or `lark-cli.ps1` from
 /// falling through to an independently installed npm CLI.
 ///
-/// Replacing the global npm `lark-cli.exe` is opt-in via
-/// [`ShimInstallOptions::takeover_npm`].
+/// The default installation also replaces the global npm package binary so
+/// every command-name route crosses the account router and keychain lock.
 pub fn install_managed_shim(source: &Path, paths: &AppPaths) -> Result<PathBuf> {
     install_managed_shim_with(source, paths, ShimInstallOptions::default())
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct ShimInstallOptions {
     /// Replace `%APPDATA%\npm\node_modules\@larksuite\cli\bin\lark-cli.exe`
-    /// with the managed shim. Off by default: open-source installs must not
-    /// rewrite a third-party package unless the user asks.
+    /// with the managed shim. This is on by default because leaving a second
+    /// writable official CLI route bypasses account isolation and locking.
     pub takeover_npm: bool,
+}
+
+impl Default for ShimInstallOptions {
+    fn default() -> Self {
+        Self { takeover_npm: true }
+    }
 }
 
 pub fn install_managed_shim_with(
@@ -175,7 +181,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn default_install_does_not_replace_the_global_npm_package_binary() {
+    fn default_install_replaces_the_global_npm_package_binary() {
         let _environment = environment_lock();
         let temp = tempfile::tempdir().unwrap();
         let paths = AppPaths::new(temp.path().join("lpc-home"));
@@ -201,10 +207,7 @@ mod tests {
         }
         result.unwrap();
 
-        assert_eq!(
-            std::fs::read(&direct_binary).unwrap(),
-            b"legacy-official-cli"
-        );
-        assert!(!paths.runtime_dir().join("legacy-cli-backups").exists());
+        assert_eq!(std::fs::read(&direct_binary).unwrap(), b"managed-shim");
+        assert!(paths.runtime_dir().join("legacy-cli-backups").exists());
     }
 }

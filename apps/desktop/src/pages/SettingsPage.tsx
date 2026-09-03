@@ -14,10 +14,9 @@ export interface SettingsPageProps {
   onReload: () => Promise<void>;
 }
 
-export function SettingsPage(props: SettingsPageProps) {
+export function SettingsPage(_props: SettingsPageProps) {
   const [autostart, setAutostartState] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
-  const [pathBusy, setPathBusy] = useState(false);
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => getThemeMode());
   const [identity, setIdentity] = useState<RuntimeIdentity | null>(null);
 
@@ -46,24 +45,6 @@ export function SettingsPage(props: SettingsPageProps) {
       Toast.error(normalizeError(error));
     } finally {
       setSaving(false);
-    }
-  };
-
-  const updatePathTakeover = async (enabled: boolean) => {
-    try {
-      setPathBusy(true);
-      if (enabled) {
-        await api.installPathTakeover();
-        Toast.success(copy.settings.pathTakeoverOn);
-      } else {
-        await api.removePathTakeover();
-        Toast.success(copy.settings.pathTakeoverOff);
-      }
-      await props.onReload();
-    } catch (error) {
-      Toast.error(normalizeError(error));
-    } finally {
-      setPathBusy(false);
     }
   };
 
@@ -104,10 +85,8 @@ export function SettingsPage(props: SettingsPageProps) {
           </div>
           <Switch
             aria-label={copy.settings.pathTakeover}
-            checked={props.data.settings.pathTakeoverEnabled}
-            loading={pathBusy}
-            disabled={pathBusy}
-            onChange={(checked) => void updatePathTakeover(checked)}
+            checked
+            disabled
           />
         </div>
         <div className="settings-row">

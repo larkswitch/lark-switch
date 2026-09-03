@@ -44,5 +44,5 @@ export function accountSelector(account: AccountRecord, allAccounts: AccountReco
 }
 
 export function accountCommand(account: AccountRecord, allAccounts: AccountRecord[]): string {
-  return `lark-cli --account ${accountSelector(account, allAccounts)} ${ACCOUNT_COMMAND_PLACEHOLDER}`;
+  return `lark-cli --lpc-account ${accountSelector(account, allAccounts)} ${ACCOUNT_COMMAND_PLACEHOLDER}`;
 }

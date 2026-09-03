@@ -34,7 +34,7 @@ One App can have N users. One user can also appear under multiple Apps as distin
 
 1. Desktop opens System Status.
 2. Install recommended official CLI.
-3. Install product Shim. PATH takeover is opt-in.
+3. Install the product Shim and make it the only command-name route to the official CLI.
 4. Reopen the desktop after the runtime is first installed.
 
 ### Add App

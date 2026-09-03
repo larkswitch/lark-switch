@@ -35,7 +35,7 @@ larkswitch uses the officially supported `LARKSUITE_CLI_CONFIG_DIR` to isolate e
 - **Per-command identity** — `--account` affects that one command only; the global active account does not move.
 - **In-flight commands never change identity** — identity is snapshotted when a command starts. Running several identities concurrently never crosses wires.
 - **Tokens never touched** — no Access / Refresh Token storage. OAuth, refresh and the OS keychain stay with official [`lark-cli`](https://github.com/larksuite/cli). See [docs/SECURITY.md](docs/SECURITY.md).
-- **PATH takeover off by default** — your existing `lark-cli` is untouched unless you explicitly pass `--path-takeover`.
+- **One managed command route** — PATH and the global npm entry are kept behind the account router and shared keychain lock.
 
 ## 30-second quickstart
 
@@ -52,7 +52,7 @@ Then pick one:
 - **Humans**: open the desktop app and switch from the tray (or `larkswitch account switch <uuid>` for a persistent switch);
 - **Terminal / agents**: `lark-cli --account alias:zhangsan whoami` for a one-shot, without touching the global active.
 
-If you want a plain `lark-cli` in your terminal to route through this product, turn PATH takeover on explicitly: `larkswitch setup --path-takeover`.
+A plain `lark-cli` in a newly opened terminal routes through larkswitch after setup.
 
 <details><summary><b>Download installers</b> (Windows / macOS with tray, Linux CLI-only)</summary>
 
@@ -133,7 +133,7 @@ The state directory is decided by `LPC_HOME` (platform user-data directory when 
 
 <details><summary>Will it change my existing lark-cli?</summary>
 
-Not by default. PATH takeover is an explicit `--path-takeover`; only `--takeover-npm` replaces the global npm entry. Undo with `larkswitch path remove`.
+larkswitch automatically manages PATH and the global npm `lark-cli` entry so they cannot bypass account routing or the shared keychain lock. Explicit uninstall can remove the PATH entry with `larkswitch path remove`; the desktop app restores secure routing while it is running.
 </details>
 
 <details><summary>macOS says "damaged" or blocks the app?</summary>

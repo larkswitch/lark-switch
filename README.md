@@ -132,7 +132,12 @@ Linux 的发布产物是 CLI + Shim：控制面命令与身份隔离全部可用
 
 <details><summary>它会改我现有的 lark-cli 吗？</summary>
 
-默认不会。PATH 接管是显式的 `--path-takeover`，`--takeover-npm` 才会替换全局 npm 入口。撤销用 `larkswitch path remove`。
+larkswitch 会自动接管 PATH 和全局 npm 的 `lark-cli` 入口，避免它绕过账号路由和 keychain 锁。显式卸载时可用 `larkswitch path remove`；桌面端运行期间不保留可写的官方直连入口。
+</details>
+
+<details><summary>App Secret 会保存在哪里？</summary>
+
+桌面端只通过标准输入调用官方 CLI 的 `--secret-stdin`，Secret 由官方 CLI 写入操作系统 keychain；larkswitch 不把明文写入自己的状态、命令行或日志。
 </details>
 
 <details><summary>macOS 提示「已损坏，无法打开」或被系统拦截？</summary>
