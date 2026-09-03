@@ -15,6 +15,7 @@ pub mod consistency;
 pub mod diagnostics;
 pub mod error;
 pub mod keychain_guard;
+pub mod keychain_view;
 pub mod keychain_watch;
 pub mod locking;
 pub mod logging;
@@ -52,6 +53,10 @@ pub use error::{LpcError, Result};
 pub use keychain_guard::{
     backup_keychain_registry, default_keychain_backup_dir, ensure_keychain_snapshot_if_stale,
     inspect_keychain, KeychainBackupReport, KeychainStatus,
+};
+pub use keychain_view::{
+    enforce_host_keychain_view, ensure_host_keychain_view, inspect_host_keychain_view,
+    KeychainViewKind, KeychainViewStatus,
 };
 pub use keychain_watch::{
     classify_keychain_delta, expected_keychain_slots, force_verify_for_health, is_mass_cliff,

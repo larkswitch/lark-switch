@@ -96,20 +96,35 @@ pub fn run_diagnostics_with(store: &StateStore, level: RedactionLevel) -> Result
     let expected = shim_name(store.paths().bin_dir());
     checks.push(path_route_check(&expected));
 
+    let keychain_view = crate::inspect_host_keychain_view(store.paths());
+    checks.push(keychain_view_check(&keychain_view));
+
     let keychain = crate::keychain_guard::inspect_keychain();
     let account_count = catalog.accounts.len();
-    let watch = crate::keychain_watch::observe_keychain_slots(
-        store.paths(),
-        &keychain,
-        account_count,
-        false,
-    )
-    .ok();
-    checks.push(keychain_slot_check(
-        &keychain,
-        watch.as_ref(),
-        account_count,
-    ));
+    if matches!(keychain_view.kind, crate::KeychainViewKind::Mismatch) {
+        checks.push(DiagnosticCheck {
+            id: "official_cli_keychain".into(),
+            status: DiagnosticStatus::Warn,
+            summary: "Keychain slot count is not authoritative in this registry view".into(),
+            detail: format!(
+                "Current view reports {} slot(s), but it is not the host registry. No credential-cliff comparison was performed.",
+                keychain.entry_count
+            ),
+        });
+    } else {
+        let watch = crate::keychain_watch::observe_keychain_slots(
+            store.paths(),
+            &keychain,
+            account_count,
+            false,
+        )
+        .ok();
+        checks.push(keychain_slot_check(
+            &keychain,
+            watch.as_ref(),
+            account_count,
+        ));
+    }
 
     checks.push(autostart_target_check());
 
@@ -145,6 +160,33 @@ pub fn run_diagnostics_with(store: &StateStore, level: RedactionLevel) -> Result
         generated_at: Utc::now(),
         checks,
     })
+}
+
+fn keychain_view_check(status: &crate::KeychainViewStatus) -> DiagnosticCheck {
+    let (diagnostic_status, summary) = match status.kind {
+        crate::KeychainViewKind::Unsupported => (
+            DiagnosticStatus::Pass,
+            "Host keychain view check is not required on this platform",
+        ),
+        crate::KeychainViewKind::Uninitialized => (
+            DiagnosticStatus::Warn,
+            "Host keychain view marker is not initialized",
+        ),
+        crate::KeychainViewKind::Host => (
+            DiagnosticStatus::Pass,
+            "Current process sees the host keychain registry view",
+        ),
+        crate::KeychainViewKind::Mismatch => (
+            DiagnosticStatus::Fail,
+            "Current process sees a virtualized/shadow keychain registry",
+        ),
+    };
+    DiagnosticCheck {
+        id: "keychain_view".into(),
+        status: diagnostic_status,
+        summary: summary.into(),
+        detail: status.detail.clone(),
+    }
 }
 
 fn keychain_slot_check(

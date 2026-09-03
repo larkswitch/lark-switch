@@ -39,6 +39,7 @@ fn run() -> lpc_core::Result<i32> {
     );
 
     let paths = AppPaths::discover()?;
+    lpc_core::enforce_host_keychain_view(&paths)?;
     // Once, on the way in: this is the hot path for every `lark-cli` call, and
     // a shim that refused to run because a log file would not open would take
     // the whole CLI down with it.

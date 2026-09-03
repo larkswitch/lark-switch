@@ -994,6 +994,15 @@ fn main() {
                 Err(error) => return Err(std::io::Error::other(error.to_string()).into()),
             };
 
+            if let Err(error) = lpc_core::ensure_host_keychain_view(&paths) {
+                tracing::error!(%error, "host keychain view verification failed");
+                show_blocking_message(
+                    "larkswitch — 已阻止影子凭据环境",
+                    "当前进程看到的 Windows 注册表与宿主凭据视图不一致。为避免刷新或删除错误副本，larkswitch 已在接触凭据前停止。\n\n请从 Windows Terminal 或开始菜单启动安装版。",
+                );
+                return Err(std::io::Error::other(error.to_string()).into());
+            }
+
             if let Err(error) = run_credential_backup(&paths, "startup") {
                 tracing::warn!(%error, "credential backup failed during startup");
             }

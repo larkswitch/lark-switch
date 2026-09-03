@@ -64,6 +64,16 @@ pub enum LpcError {
     )]
     MsixContainerBlocked,
 
+    #[error(
+        "LPC_KEYCHAIN_VIEW_UNINITIALIZED: host keychain view marker is missing; start the installed larkswitch desktop app once before using lark-cli"
+    )]
+    KeychainViewUninitialized,
+
+    #[error(
+        "LPC_KEYCHAIN_VIEW_MISMATCH: this process sees a virtualized/shadow Windows registry; run lark-cli from a host terminal instead"
+    )]
+    KeychainViewMismatch,
+
     #[error("LPC_CLI_OUTPUT_INVALID: {0}")]
     InvalidCliOutput(String),
 
@@ -143,6 +153,8 @@ impl LpcError {
             Self::CliKeychainBusy => "LPC_CLI_KEYCHAIN_BUSY",
             Self::RoutingGateBusy(_) => "LPC_ROUTING_GATE_BUSY",
             Self::MsixContainerBlocked => "LPC_MSIX_CONTAINER",
+            Self::KeychainViewUninitialized => "LPC_KEYCHAIN_VIEW_UNINITIALIZED",
+            Self::KeychainViewMismatch => "LPC_KEYCHAIN_VIEW_MISMATCH",
             Self::InvalidCliOutput(_) => "LPC_CLI_OUTPUT_INVALID",
             Self::UnsafeConfig(_) => "LPC_CONFIG_UNSAFE",
             Self::ScopeOutOfBoundary(_) => "LPC_SCOPE_OUT_OF_BOUNDARY",

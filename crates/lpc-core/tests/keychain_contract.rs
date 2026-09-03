@@ -197,6 +197,43 @@ fn desktop_blocks_msix_before_touching_autostart_or_credentials() {
     );
 }
 
+#[test]
+fn shim_blocks_a_shadow_registry_before_running_the_official_cli() {
+    let root = common::repo_root();
+    let shim = std::fs::read_to_string(root.join("crates/lpc-shim/src/main.rs"))
+        .expect("read lpc shim source");
+    let view_guard = shim
+        .find("enforce_host_keychain_view(&paths)?")
+        .expect("shim must verify the host registry view");
+    let managed_launch = shim
+        .find("Command::new(&managed)")
+        .expect("official CLI launch marker");
+    assert!(
+        view_guard < managed_launch,
+        "registry view guard must run before the official CLI"
+    );
+}
+
+#[test]
+fn desktop_establishes_host_view_before_backing_up_or_inspecting_credentials() {
+    let root = common::repo_root();
+    let desktop = std::fs::read_to_string(root.join("apps/desktop/src-tauri/src/main.rs"))
+        .expect("read desktop source");
+    let guard = desktop
+        .find("ensure_host_keychain_view(&paths)")
+        .expect("desktop must establish the host registry view");
+    let backup = desktop
+        .find("run_credential_backup(&paths, \"startup\")")
+        .expect("credential backup marker");
+    let inspect = desktop
+        .find("lpc_core::inspect_keychain()")
+        .expect("credential inspection marker");
+    assert!(
+        guard < backup && guard < inspect,
+        "host view must be established before credential access"
+    );
+}
+
 fn scanned_files(root: &std::path::Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = SCANNED_SOURCE_DIRS
         .iter()

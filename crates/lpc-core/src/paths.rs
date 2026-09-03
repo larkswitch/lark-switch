@@ -41,6 +41,10 @@ impl AppPaths {
         self.data_dir().join("keychain-watch.json")
     }
 
+    pub fn host_keychain_view_file(&self) -> PathBuf {
+        self.data_dir().join("host-keychain-view.json")
+    }
+
     pub fn apps_dir(&self) -> PathBuf {
         self.root.join("apps")
     }
