@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 const CMD_FORWARDER: &[u8] = b"@echo off\r\n\"%~dp0lark-cli.exe\" %*\r\nexit /b %ERRORLEVEL%\r\n";
 #[cfg(windows)]
 const POWERSHELL_FORWARDER: &[u8] = b"& (Join-Path $PSScriptRoot 'lark-cli.exe') @args\r\n";
+#[cfg(windows)]
+const SHELL_FORWARDER: &[u8] = b"#!/bin/sh\nexec \"$(dirname \"$0\")/lark-cli.exe\" \"$@\"\n";
 
 /// Installs the managed shim and, on Windows, the explicit command-name
 /// forwarders that prevent callers of `lark-cli.cmd` or `lark-cli.ps1` from
@@ -50,7 +52,7 @@ pub fn install_managed_shim_with(
         write_if_changed(&paths.bin_dir().join("lark-cli.cmd"), CMD_FORWARDER)?;
         write_if_changed(&paths.bin_dir().join("lark-cli.ps1"), POWERSHELL_FORWARDER)?;
         if options.takeover_npm {
-            repair_global_npm_binary(&destination, paths)?;
+            repair_global_npm_routes(&destination, paths)?;
         }
     }
 
@@ -74,7 +76,7 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn repair_global_npm_binary(shim: &Path, paths: &AppPaths) -> Result<()> {
+fn repair_global_npm_routes(shim: &Path, paths: &AppPaths) -> Result<()> {
     let Some(npm_root) = windows_npm_root(paths) else {
         return Ok(());
     };
@@ -84,29 +86,39 @@ fn repair_global_npm_binary(shim: &Path, paths: &AppPaths) -> Result<()> {
         .join("cli")
         .join("bin")
         .join("lark-cli.exe");
-    if !direct_binary.is_file() {
-        return Ok(());
-    }
-
     let shim_bytes = std::fs::read(shim)?;
-    let direct_bytes = std::fs::read(&direct_binary)?;
-    if direct_bytes == shim_bytes {
-        return Ok(());
+    if direct_binary.is_file() {
+        backup_and_replace_npm_route(&direct_binary, &shim_bytes, paths)?;
     }
-
-    let digest = hex::encode(Sha256::digest(&direct_bytes));
-    let backup = paths
-        .runtime_dir()
-        .join("legacy-cli-backups")
-        .join(format!("npm-lark-cli-{}.exe", &digest[..16]));
-    write_if_changed(&backup, &direct_bytes)?;
-    write_if_changed(&direct_binary, &shim_bytes)?;
+    backup_and_replace_npm_route(&npm_root.join("lark-cli.exe"), &shim_bytes, paths)?;
+    backup_and_replace_npm_route(&npm_root.join("lark-cli.cmd"), CMD_FORWARDER, paths)?;
+    backup_and_replace_npm_route(&npm_root.join("lark-cli.ps1"), POWERSHELL_FORWARDER, paths)?;
+    backup_and_replace_npm_route(&npm_root.join("lark-cli"), SHELL_FORWARDER, paths)?;
     tracing::warn!(
-        target = %direct_binary.display(),
-        backup = %backup.display(),
-        "direct npm lark-cli route replaced with managed shim"
+        target = %npm_root.display(),
+        "global npm lark-cli routes replaced with managed shim forwarders"
     );
     Ok(())
+}
+
+#[cfg(windows)]
+fn backup_and_replace_npm_route(path: &Path, replacement: &[u8], paths: &AppPaths) -> Result<()> {
+    if let Ok(previous) = std::fs::read(path) {
+        if previous == replacement {
+            return Ok(());
+        }
+        let digest = hex::encode(Sha256::digest(&previous));
+        let file_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("lark-cli");
+        let backup = paths
+            .runtime_dir()
+            .join("legacy-cli-backups")
+            .join(format!("npm-{file_name}-{}", &digest[..16]));
+        write_if_changed(&backup, &previous)?;
+    }
+    write_if_changed(path, replacement)
 }
 
 #[cfg(windows)]
@@ -170,6 +182,16 @@ mod tests {
         result.unwrap();
 
         assert_eq!(std::fs::read(&direct_binary).unwrap(), b"managed-shim");
+        assert_eq!(
+            std::fs::read(npm_root.join("lark-cli.exe")).unwrap(),
+            b"managed-shim"
+        );
+        assert!(std::fs::read_to_string(npm_root.join("lark-cli.cmd"))
+            .unwrap()
+            .contains("%~dp0lark-cli.exe"));
+        assert!(std::fs::read_to_string(npm_root.join("lark-cli.ps1"))
+            .unwrap()
+            .contains("$PSScriptRoot"));
         let backup_dir = paths.runtime_dir().join("legacy-cli-backups");
         let backups = std::fs::read_dir(backup_dir)
             .unwrap()
@@ -208,6 +230,10 @@ mod tests {
         result.unwrap();
 
         assert_eq!(std::fs::read(&direct_binary).unwrap(), b"managed-shim");
+        assert_eq!(
+            std::fs::read(npm_root.join("lark-cli.exe")).unwrap(),
+            b"managed-shim"
+        );
         assert!(paths.runtime_dir().join("legacy-cli-backups").exists());
     }
 }
