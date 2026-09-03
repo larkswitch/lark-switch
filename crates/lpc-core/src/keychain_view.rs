@@ -6,13 +6,18 @@
 //! CLI rotates or deletes tokens in the wrong hive. A random marker stored once
 //! in both places makes that split observable without reading credential data.
 
+#[cfg(windows)]
 use crate::atomic::write_json_atomic;
 use crate::error::{LpcError, Result};
 use crate::paths::AppPaths;
+#[cfg(windows)]
 use serde::{Deserialize, Serialize};
+#[cfg(windows)]
 use std::fs;
+#[cfg(any(windows, test))]
 use uuid::Uuid;
 
+#[cfg(windows)]
 const MARKER_VERSION: u32 = 1;
 #[cfg(windows)]
 const REGISTRY_KEY: &str = r"Software\LarkProfileConsole\HostKeychainView";
@@ -33,6 +38,7 @@ pub struct KeychainViewStatus {
     pub detail: String,
 }
 
+#[cfg(windows)]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedMarker {
@@ -67,6 +73,7 @@ pub fn enforce_host_keychain_view(paths: &AppPaths) -> Result<()> {
     }
 }
 
+#[cfg(windows)]
 fn read_disk_marker(paths: &AppPaths) -> Result<Option<Uuid>> {
     let path = paths.host_keychain_view_file();
     if !path.is_file() {
@@ -82,6 +89,7 @@ fn read_disk_marker(paths: &AppPaths) -> Result<Option<Uuid>> {
     Ok(Some(persisted.marker))
 }
 
+#[cfg(windows)]
 fn write_disk_marker(paths: &AppPaths, marker: Uuid) -> Result<()> {
     write_json_atomic(
         &paths.host_keychain_view_file(),
@@ -92,6 +100,7 @@ fn write_disk_marker(paths: &AppPaths, marker: Uuid) -> Result<()> {
     )
 }
 
+#[cfg(any(windows, test))]
 fn classify(disk: Option<Uuid>, registry: Option<Uuid>) -> KeychainViewStatus {
     match (disk, registry) {
         (None, None) => KeychainViewStatus {
