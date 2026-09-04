@@ -848,7 +848,9 @@ mod tests {
             let ps1 = std::fs::read_to_string(paths.bin_dir().join("lark-cli.ps1")).unwrap();
             assert!(cmd.contains("%~dp0lark-cli.exe"));
             assert!(ps1.contains("$PSScriptRoot"));
-            assert!(!ps1.contains("exit $LASTEXITCODE"));
+            assert!(ps1.contains("$MyInvocation.ExpectingInput"));
+            assert!(ps1.contains("$input | & $exe @args"));
+            assert!(ps1.contains("exit $exitCode"));
         }
     }
 }

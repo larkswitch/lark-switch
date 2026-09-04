@@ -9,9 +9,11 @@ use crate::error::{LpcError, Result};
 use crate::paths::AppPaths;
 use serde::{Deserialize, Serialize};
 
-const PROTOCOL_VERSION: u32 = 1;
+const PROTOCOL_VERSION: u32 = 2;
 #[cfg(any(windows, test))]
 const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
+#[cfg(any(windows, test))]
+const MAX_STDIN_BYTES: usize = 16 * 1024 * 1024;
 
 #[cfg(windows)]
 fn host_bridge_child_creation_flags() -> u32 {
@@ -28,6 +30,7 @@ fn configure_host_bridge_child(command: &mut std::process::Command) {
 struct HostBridgeRequest {
     version: u32,
     args: Vec<String>,
+    stdin_utf8: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -58,13 +61,46 @@ pub fn execute_via_host_bridge(
             })
         })
         .collect::<Result<Vec<_>>>()?;
+    #[cfg(windows)]
+    let stdin_utf8 = read_requested_stdin(&args)?;
+    #[cfg(not(windows))]
+    let stdin_utf8 = None;
     platform::execute(
         paths,
         HostBridgeRequest {
             version: PROTOCOL_VERSION,
             args,
+            stdin_utf8,
         },
     )
+}
+
+#[cfg(any(windows, test))]
+fn requests_stdin(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| arg == "-" || arg.strip_prefix('-').is_some_and(|arg| arg.ends_with("=-")))
+}
+
+#[cfg(windows)]
+fn read_requested_stdin(args: &[String]) -> Result<Option<String>> {
+    use std::io::Read;
+
+    if !requests_stdin(args) {
+        return Ok(None);
+    }
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .lock()
+        .take((MAX_STDIN_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_STDIN_BYTES {
+        return Err(LpcError::HostBridgeUnavailable(format!(
+            "stdin exceeded the host bridge limit of {MAX_STDIN_BYTES} bytes"
+        )));
+    }
+    String::from_utf8(bytes).map(Some).map_err(|_| {
+        LpcError::HostBridgeUnavailable("host bridge stdin must be valid UTF-8".into())
+    })
 }
 
 #[cfg(any(windows, test))]
@@ -184,13 +220,16 @@ mod platform {
         let shim = paths.bin_dir().join("lark-cli.exe");
         let mut command = Command::new(&shim);
         configure_host_bridge_child(&mut command);
-        let response = match command
+        command
             .args(&request.args)
-            .stdin(Stdio::null())
+            .stdin(if request.stdin_utf8.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-        {
+            .stderr(Stdio::piped());
+        let response = match run_child(command, request.stdin_utf8) {
             Ok(output) => HostBridgeResponse {
                 exit_code: output.status.code().unwrap_or(1),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -206,6 +245,21 @@ mod platform {
         pipe.write_all(&encode_frame(&response)?)?;
         pipe.flush()?;
         Ok(())
+    }
+
+    fn run_child(
+        mut command: Command,
+        stdin_utf8: Option<String>,
+    ) -> std::io::Result<std::process::Output> {
+        let mut child = command.spawn()?;
+        if let Some(stdin_utf8) = stdin_utf8 {
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| std::io::Error::other("host bridge child stdin was not piped"))?;
+            stdin.write_all(stdin_utf8.as_bytes())?;
+        }
+        child.wait_with_output()
     }
 
     fn create_pipe(paths: &AppPaths) -> Result<File> {
@@ -300,11 +354,25 @@ mod tests {
         let request = HostBridgeRequest {
             version: PROTOCOL_VERSION,
             args: vec!["--lpc-account".into(), "道庸".into(), "whoami".into()],
+            stdin_utf8: Some("{\"中文\":true}\n".into()),
         };
         let frame = encode_frame(&request).unwrap();
         let decoded: HostBridgeRequest = decode_frame(&mut frame.as_slice()).unwrap();
         assert_eq!(decoded.version, PROTOCOL_VERSION);
         assert_eq!(decoded.args, request.args);
+        assert_eq!(decoded.stdin_utf8, request.stdin_utf8);
+    }
+
+    #[test]
+    fn stdin_is_only_captured_for_explicit_stdin_arguments() {
+        assert!(requests_stdin(&["--cells=-".into()]));
+        assert!(requests_stdin(&["--cells".into(), "-".into()]));
+        assert!(!requests_stdin(&["--cells=@payload.json".into()]));
+        assert!(!requests_stdin(&[
+            "whoami".into(),
+            "--as".into(),
+            "user".into()
+        ]));
     }
 
     #[test]

@@ -6,7 +6,15 @@ use std::path::{Path, PathBuf};
 #[cfg(windows)]
 const CMD_FORWARDER: &[u8] = b"@echo off\r\n\"%~dp0lark-cli.exe\" %*\r\nexit /b %ERRORLEVEL%\r\n";
 #[cfg(windows)]
-const POWERSHELL_FORWARDER: &[u8] = b"& (Join-Path $PSScriptRoot 'lark-cli.exe') @args\r\n";
+const POWERSHELL_FORWARDER: &[u8] = br#"$exe = Join-Path $PSScriptRoot 'lark-cli.exe'
+if ($MyInvocation.ExpectingInput) {
+    $input | & $exe @args
+} else {
+    & $exe @args
+}
+$exitCode = $LASTEXITCODE
+exit $exitCode
+"#;
 #[cfg(windows)]
 const SHELL_FORWARDER: &[u8] = b"#!/bin/sh\nexec \"$(dirname \"$0\")/lark-cli.exe\" \"$@\"\n";
 
@@ -191,7 +199,7 @@ mod tests {
             .contains("%~dp0lark-cli.exe"));
         assert!(std::fs::read_to_string(npm_root.join("lark-cli.ps1"))
             .unwrap()
-            .contains("$PSScriptRoot"));
+            .contains("$MyInvocation.ExpectingInput"));
         let backup_dir = paths.runtime_dir().join("legacy-cli-backups");
         let backups = std::fs::read_dir(backup_dir)
             .unwrap()
