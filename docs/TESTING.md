@@ -28,7 +28,7 @@ Coverage includes:
 
 | Test | What it guards |
 | --- | --- |
-| `tests/deploy_contract.rs` | The release desktop binary must embed the current `apps/desktop/dist/assets` bundle, which only `npx tauri build --no-bundle` produces — a `cargo build --release` binary falls back to devUrl and shows ERR_CONNECTION_REFUSED after deployment. Desktop packaging must use `npx tauri build --no-bundle`; never ship a `cargo build --release` binary as the installer. |
+| `tests/deploy_contract.rs` | The release desktop binary must embed the current `apps/desktop/dist/assets` bundle, and the packaged `lark-cli` sidecar must report the same version as the desktop. This prevents both the devUrl blank-screen incident and a stale sidecar silently downgrading the managed shim during startup self-repair. Desktop packaging must build sidecars first and then use `npx tauri build --no-bundle`; never ship a plain `cargo build --release` desktop binary. |
 | `tests/atomic_write_contract.rs` | Control-plane state may only reach disk through `lpc_core::atomic`; raw `fs::write` / `fs::copy` / `File::create` are rejected outside `atomic.rs`. |
 | `tests/keychain_contract.rs` | No whole-hive registry replay, a `.reg` snapshot before any keychain write, and never deleting or recreating the credential key itself. |
 | `tests/docs_contract.rs` | Documentation may not drift from the implementation: every documented `lpcctl` subcommand and flag must exist in the clap definition, load-bearing identifiers must appear on both the document and the code side, and retired or dangerous restore advice must stay deleted. |

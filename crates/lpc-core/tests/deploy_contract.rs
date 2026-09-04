@@ -81,11 +81,51 @@ fn tauri_config_still_embeds_the_scanned_dist_directory() {
     );
 }
 
+#[test]
+fn release_shim_reports_the_same_version_as_the_desktop() {
+    let root = common::repo_root();
+    let shim = root.join("target").join("release").join(shim_file_name());
+
+    if !shim.exists() {
+        assert!(
+            std::env::var_os(REQUIRE_ARTIFACT_ENV).is_none(),
+            "{REQUIRE_ARTIFACT_ENV} is set but {} does not exist. Build the sidecars before the desktop.",
+            common::relative(&shim, &root)
+        );
+        eprintln!("skip: {} not built", common::relative(&shim, &root));
+        return;
+    }
+
+    let output = std::process::Command::new(&shim)
+        .arg("--lpc-shim-version")
+        .output()
+        .expect("run release lark-cli version probe");
+    let reported = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    assert!(
+        output.status.success() && reported == env!("CARGO_PKG_VERSION"),
+        "{} is not the sidecar built for desktop {} (reported {:?}, exit {}). \
+         Build `lpc-shim` first, prepare sidecars, then run the Tauri build; \
+         otherwise desktop self-repair can silently downgrade the installed shim.",
+        common::relative(&shim, &root),
+        env!("CARGO_PKG_VERSION"),
+        reported,
+        output.status
+    );
+}
+
 fn binary_file_name() -> &'static str {
     if cfg!(windows) {
         "lark-profile-console.exe"
     } else {
         "lark-profile-console"
+    }
+}
+
+fn shim_file_name() -> &'static str {
+    if cfg!(windows) {
+        "lark-cli.exe"
+    } else {
+        "lark-cli"
     }
 }
 

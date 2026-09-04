@@ -74,6 +74,9 @@ pub enum LpcError {
     )]
     KeychainViewMismatch,
 
+    #[error("LPC_HOST_BRIDGE_UNAVAILABLE: {0}")]
+    HostBridgeUnavailable(String),
+
     #[error("LPC_CLI_OUTPUT_INVALID: {0}")]
     InvalidCliOutput(String),
 
@@ -155,6 +158,7 @@ impl LpcError {
             Self::MsixContainerBlocked => "LPC_MSIX_CONTAINER",
             Self::KeychainViewUninitialized => "LPC_KEYCHAIN_VIEW_UNINITIALIZED",
             Self::KeychainViewMismatch => "LPC_KEYCHAIN_VIEW_MISMATCH",
+            Self::HostBridgeUnavailable(_) => "LPC_HOST_BRIDGE_UNAVAILABLE",
             Self::InvalidCliOutput(_) => "LPC_CLI_OUTPUT_INVALID",
             Self::UnsafeConfig(_) => "LPC_CONFIG_UNSAFE",
             Self::ScopeOutOfBoundary(_) => "LPC_SCOPE_OUT_OF_BOUNDARY",

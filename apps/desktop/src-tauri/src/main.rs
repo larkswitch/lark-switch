@@ -4,9 +4,9 @@ use lpc_core::show_blocking_message;
 use lpc_core::{
     check_data_root_consistency, default_official_config_dirs, diagnostics::run_diagnostics,
     ensure_keychain_snapshot_if_stale, force_verify_for_health, observe_keychain_slots,
-    pin_user_run_autostart, run_credential_backup, AccountHealth, AccountService,
-    AppCreationCoordinator, AppCreationProgress, AppCreationStart, AppPaths, AuthCoordinator,
-    AuthFlowStart, AuthProgress, Brand, ControlPlaneSnapshot, DataRootConsistency,
+    pin_user_run_autostart, run_credential_backup, start_host_bridge, AccountHealth,
+    AccountService, AppCreationCoordinator, AppCreationProgress, AppCreationStart, AppPaths,
+    AuthCoordinator, AuthFlowStart, AuthProgress, Brand, ControlPlaneSnapshot, DataRootConsistency,
     DiagnosticReport, ExistingAccountImport, ExistingCliCandidate, HealthRefreshOutcome,
     KeychainWatchKind, OfficialCli, PathTakeover, PathTakeoverReport, RoutingGate, RuntimeManager,
     SecretString, SingletonLock, StateStore,
@@ -782,11 +782,33 @@ fn install_shim(source: &std::path::Path, paths: &AppPaths) -> Result<PathBuf, S
     lpc_core::install_managed_shim(source, paths).map_err(|error| error.to_string())
 }
 
+fn validate_packaged_shim(source: &std::path::Path) -> Result<(), String> {
+    let output = std::process::Command::new(source)
+        .arg("--lpc-shim-version")
+        .output()
+        .map_err(|error| format!("cannot inspect packaged lark-cli shim: {error}"))?;
+    let reported = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let expected = env!("CARGO_PKG_VERSION");
+    if !output.status.success() || reported != expected {
+        return Err(format!(
+            "packaged lark-cli shim version mismatch: desktop={expected}, shim={} (exit={})",
+            if reported.is_empty() {
+                "unknown"
+            } else {
+                &reported
+            },
+            output.status
+        ));
+    }
+    Ok(())
+}
+
 fn repair_managed_route(store: &StateStore) -> Result<(), String> {
     let paths = store.paths();
     let source = sibling_shim().ok_or_else(|| {
         "The packaged lark-cli shim is missing beside the desktop executable".to_owned()
     })?;
+    validate_packaged_shim(&source)?;
     install_shim(&source, paths)?;
     store.set_path_takeover_enabled(true).map_err(error_text)?;
     PathTakeover::new(paths.clone())
@@ -1048,6 +1070,8 @@ fn main() {
             if let Err(error) = repair_managed_route(&store) {
                 tracing::warn!(%error, "managed route self-repair failed during startup");
             }
+            start_host_bridge(paths.clone())
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
             let cli = managed_cli(&store)
                 .unwrap_or_else(|_| OfficialCli::new(paths.runtime_dir().join("missing-lark-cli")));
             let account_service = AccountService::new(store.clone(), cli);

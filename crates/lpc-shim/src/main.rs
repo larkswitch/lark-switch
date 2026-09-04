@@ -1,7 +1,9 @@
 use lpc_core::{
-    enforce_msix_shim_policy, resolve_execution_override, strip_leading_lpc_flags,
-    try_acquire_cli_keychain_lock, AppPaths, LpcError, RoutingGate, StateStore,
+    execute_via_host_bridge, inspect_host_keychain_view, is_running_in_msix_package,
+    resolve_execution_override, strip_leading_lpc_flags, try_acquire_cli_keychain_lock, AppPaths,
+    KeychainViewKind, LpcError, RoutingGate, StateStore,
 };
+use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -17,9 +19,12 @@ fn main() {
 }
 
 fn run() -> lpc_core::Result<i32> {
-    enforce_msix_shim_policy()?;
-
     let raw_args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if raw_args.len() == 1 && raw_args[0].as_os_str() == std::ffi::OsStr::new("--lpc-shim-version")
+    {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(0);
+    }
     let parsed = strip_leading_lpc_flags(&raw_args)?;
     if let Some(reason) = guarded_management_command(&parsed.forwarded) {
         eprintln!(
@@ -39,6 +44,21 @@ fn run() -> lpc_core::Result<i32> {
     );
 
     let paths = AppPaths::discover()?;
+    let keychain_view = inspect_host_keychain_view(&paths);
+    if is_running_in_msix_package() || keychain_view.kind == KeychainViewKind::Mismatch {
+        let mut bridge_args = Vec::with_capacity(parsed.forwarded.len() + 2);
+        if let Some(selector) = override_selector.as_deref() {
+            bridge_args.push(std::ffi::OsString::from("--lpc-account"));
+            bridge_args.push(std::ffi::OsString::from(selector));
+        }
+        bridge_args.extend(parsed.forwarded.iter().cloned());
+        let response = execute_via_host_bridge(&paths, &bridge_args)?;
+        print!("{}", response.stdout);
+        eprint!("{}", response.stderr);
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        return Ok(response.exit_code);
+    }
     lpc_core::enforce_host_keychain_view(&paths)?;
     // Once, on the way in: this is the hot path for every `lark-cli` call, and
     // a shim that refused to run because a log file would not open would take

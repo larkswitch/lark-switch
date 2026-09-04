@@ -198,19 +198,35 @@ fn desktop_blocks_msix_before_touching_autostart_or_credentials() {
 }
 
 #[test]
-fn shim_blocks_a_shadow_registry_before_running_the_official_cli() {
+fn shadow_registry_commands_are_forwarded_to_the_verified_host_before_cli_launch() {
     let root = common::repo_root();
     let shim = std::fs::read_to_string(root.join("crates/lpc-shim/src/main.rs"))
         .expect("read lpc shim source");
-    let view_guard = shim
-        .find("enforce_host_keychain_view(&paths)?")
-        .expect("shim must verify the host registry view");
+    let view_check = shim
+        .find("inspect_host_keychain_view(&paths)")
+        .expect("shim must inspect the registry view");
+    let bridge = shim
+        .find("execute_via_host_bridge(&paths, &bridge_args)")
+        .expect("shadow callers must use the desktop host bridge");
     let managed_launch = shim
         .find("Command::new(&managed)")
         .expect("official CLI launch marker");
     assert!(
-        view_guard < managed_launch,
-        "registry view guard must run before the official CLI"
+        view_check < bridge && bridge < managed_launch,
+        "the shadow-view branch must run before any direct official CLI launch"
+    );
+
+    let desktop = std::fs::read_to_string(root.join("apps/desktop/src-tauri/src/main.rs"))
+        .expect("read desktop source");
+    let host_view = desktop
+        .find("ensure_host_keychain_view(&paths)")
+        .expect("desktop must establish the host registry view");
+    let host_bridge = desktop
+        .find("start_host_bridge(paths.clone())")
+        .expect("desktop must start the host bridge");
+    assert!(
+        host_view < host_bridge,
+        "the host bridge must start only after the desktop proves its registry view"
     );
 }
 

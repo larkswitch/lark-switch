@@ -54,6 +54,25 @@ Shim argv rules: only a leading run of `--account` / `--lpc-account` (`VALUE` or
 
 This deliberately permits switching while an old command runs. The old command has already captured its route; a later command observes the new generation. One-shot overrides never participate in this persistent switch path.
 
+## Windows host execution bridge
+
+Some IDE/agent launch contexts can share `LPC_HOME` while seeing a different
+HKCU/keychain view. The shim compares a marker stored in both locations before
+touching credentials. A mismatch no longer makes the CLI unusable and is never
+allowed to fall through to the official binary in that process.
+
+The unpackaged desktop app starts a local Windows named-pipe server only after it
+has proved that its disk and registry markers match. On a mismatch (or an MSIX
+package identity), the caller forwards argv to that pipe. The desktop launches
+the installed shim as its child, so selector parsing, management-command guards,
+routing leases, the shared keychain lock, and redacted audit logging all run in
+the verified host view. Tokens and keychain values never cross the pipe.
+
+The pipe rejects remote clients and inherits the desktop user's Windows ACL. It
+does not use localhost TCP, does not expose a token service, and does not copy a
+credential into the caller's registry view. If the desktop is not running, the
+shim fails closed with `LPC_HOST_BRIDGE_UNAVAILABLE`.
+
 ## App and account lifecycle
 
 The sanitized App base config is accepted only when `appSecret` is an explicit official keychain reference tied to `appsecret:<App ID>`. Plaintext secret configs are rejected.

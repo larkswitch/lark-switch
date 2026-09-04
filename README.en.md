@@ -136,6 +136,15 @@ The state directory is decided by `LPC_HOME` (platform user-data directory when 
 larkswitch automatically manages PATH and the global npm `lark-cli` entry so they cannot bypass account routing or the shared keychain lock. Explicit uninstall can remove the PATH entry with `larkswitch path remove`; the desktop app restores secure routing while it is running.
 </details>
 
+<details><summary>Cursor / an Agent reports a mismatched credential view?</summary>
+
+While the Windows desktop app is running, larkswitch automatically forwards
+such commands to the host process over a local named pipe. Account routing stays
+the same and tokens are never copied into the Agent environment. Do not log in
+again or set a bypass variable. If you see `LPC_HOST_BRIDGE_UNAVAILABLE`, make
+sure larkswitch is running in the system tray and retry the original command.
+</details>
+
 <details><summary>macOS says "damaged" or blocks the app?</summary>
 
 **The installer is not actually corrupted** and Apple did not delete it. v0.2.0 is an **unsigned alpha** ([release notes](https://github.com/larkswitch/lark-switch/releases/tag/v0.2.0)); downloads from a browser/GitHub carry a quarantine flag. macOS sometimes shows **"larkswitch is damaged and can't be opened"** for unsigned apps — that is different from **"cannot verify the developer"**: the latter is often fixed by right-click → Open on the installer; **"damaged" usually means you must clear the quarantine attribute**.

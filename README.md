@@ -135,6 +135,14 @@ Linux 的发布产物是 CLI + Shim：控制面命令与身份隔离全部可用
 larkswitch 会自动接管 PATH 和全局 npm 的 `lark-cli` 入口，避免它绕过账号路由和 keychain 锁。显式卸载时可用 `larkswitch path remove`；桌面端运行期间不保留可写的官方直连入口。
 </details>
 
+<details><summary>Cursor / Agent 里提示凭据视图不一致怎么办？</summary>
+
+Windows 桌面端运行时，larkswitch 会自动把这类命令经本机 Named Pipe
+交给宿主进程执行；账号路由不变，Token 不会复制进 Agent 环境。无需重新登录，
+也不要设置绕过变量。若提示 `LPC_HOST_BRIDGE_UNAVAILABLE`，先确认托盘里的
+larkswitch 正在运行，再重试原命令。
+</details>
+
 <details><summary>App Secret 会保存在哪里？</summary>
 
 桌面端只通过标准输入调用官方 CLI 的 `--secret-stdin`，Secret 由官方 CLI 写入操作系统 keychain；larkswitch 不把明文写入自己的状态、命令行或日志。

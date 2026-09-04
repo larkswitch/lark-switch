@@ -14,6 +14,7 @@ pub mod cli;
 pub mod consistency;
 pub mod diagnostics;
 pub mod error;
+pub mod host_bridge;
 pub mod keychain_guard;
 pub mod keychain_view;
 pub mod keychain_watch;
@@ -50,6 +51,7 @@ pub use cli::{AuthScopes, AuthStatus, CliJson, OfficialCli, SecretString, WhoAmI
 pub use consistency::{check_consistency, ConsistencyReport};
 pub use diagnostics::{DiagnosticCheck, DiagnosticReport, DiagnosticStatus};
 pub use error::{LpcError, Result};
+pub use host_bridge::{execute_via_host_bridge, start_host_bridge, HostBridgeResponse};
 pub use keychain_guard::{
     backup_keychain_registry, default_keychain_backup_dir, ensure_keychain_snapshot_if_stale,
     inspect_keychain, KeychainBackupReport, KeychainStatus,
