@@ -10,31 +10,18 @@ use crate::paths::AppPaths;
 use serde::{Deserialize, Serialize};
 
 const PROTOCOL_VERSION: u32 = 1;
+#[cfg(any(windows, test))]
 const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
 
+#[cfg(windows)]
 fn host_bridge_child_creation_flags() -> u32 {
-    #[cfg(windows)]
-    {
-        windows_sys::Win32::System::Threading::CREATE_NO_WINDOW
-    }
-
-    #[cfg(not(windows))]
-    {
-        0
-    }
+    windows_sys::Win32::System::Threading::CREATE_NO_WINDOW
 }
 
+#[cfg(windows)]
 fn configure_host_bridge_child(command: &mut std::process::Command) {
-    let creation_flags = host_bridge_child_creation_flags();
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(creation_flags);
-    }
-
-    #[cfg(not(windows))]
-    let _ = (command, creation_flags);
+    use std::os::windows::process::CommandExt;
+    command.creation_flags(host_bridge_child_creation_flags());
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -80,6 +67,7 @@ pub fn execute_via_host_bridge(
     )
 }
 
+#[cfg(any(windows, test))]
 fn pipe_name(paths: &AppPaths) -> String {
     use sha2::{Digest, Sha256};
     let normalized = paths
@@ -94,6 +82,7 @@ fn pipe_name(paths: &AppPaths) -> String {
     )
 }
 
+#[cfg(any(windows, test))]
 fn encode_frame<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     let body = serde_json::to_vec(value)?;
     if body.len() > MAX_FRAME_BYTES {
@@ -107,6 +96,7 @@ fn encode_frame<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     Ok(frame)
 }
 
+#[cfg(any(windows, test))]
 fn decode_frame<T: for<'de> Deserialize<'de>>(reader: &mut impl std::io::Read) -> Result<T> {
     let mut length = [0_u8; 4];
     reader.read_exact(&mut length)?;
@@ -324,15 +314,12 @@ mod tests {
         assert_ne!(pipe_name(&paths), pipe_name(&AppPaths::new(r"C:\Other")));
     }
 
+    #[cfg(windows)]
     #[test]
     fn host_bridge_cli_child_uses_platform_creation_flags() {
-        #[cfg(windows)]
         assert_eq!(
             host_bridge_child_creation_flags(),
             windows_sys::Win32::System::Threading::CREATE_NO_WINDOW
         );
-
-        #[cfg(not(windows))]
-        assert_eq!(host_bridge_child_creation_flags(), 0);
     }
 }
