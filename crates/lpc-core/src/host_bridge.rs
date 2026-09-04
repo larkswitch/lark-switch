@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 const PROTOCOL_VERSION: u32 = 2;
 #[cfg(any(windows, test))]
 const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 const MAX_STDIN_BYTES: usize = 16 * 1024 * 1024;
 
 #[cfg(windows)]
