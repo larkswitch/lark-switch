@@ -12,6 +12,31 @@ use serde::{Deserialize, Serialize};
 const PROTOCOL_VERSION: u32 = 1;
 const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
 
+fn host_bridge_child_creation_flags() -> u32 {
+    #[cfg(windows)]
+    {
+        windows_sys::Win32::System::Threading::CREATE_NO_WINDOW
+    }
+
+    #[cfg(not(windows))]
+    {
+        0
+    }
+}
+
+fn configure_host_bridge_child(command: &mut std::process::Command) {
+    let creation_flags = host_bridge_child_creation_flags();
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(creation_flags);
+    }
+
+    #[cfg(not(windows))]
+    let _ = (command, creation_flags);
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct HostBridgeRequest {
     version: u32,
@@ -167,7 +192,9 @@ mod platform {
         }
 
         let shim = paths.bin_dir().join("lark-cli.exe");
-        let response = match Command::new(&shim)
+        let mut command = Command::new(&shim);
+        configure_host_bridge_child(&mut command);
+        let response = match command
             .args(&request.args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -295,5 +322,17 @@ mod tests {
         let paths = AppPaths::new(r"C:\Users\Example\LPC");
         assert_eq!(pipe_name(&paths), pipe_name(&paths));
         assert_ne!(pipe_name(&paths), pipe_name(&AppPaths::new(r"C:\Other")));
+    }
+
+    #[test]
+    fn host_bridge_cli_child_uses_platform_creation_flags() {
+        #[cfg(windows)]
+        assert_eq!(
+            host_bridge_child_creation_flags(),
+            windows_sys::Win32::System::Threading::CREATE_NO_WINDOW
+        );
+
+        #[cfg(not(windows))]
+        assert_eq!(host_bridge_child_creation_flags(), 0);
     }
 }
