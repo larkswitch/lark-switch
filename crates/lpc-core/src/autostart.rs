@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 
 pub const DESKTOP_EXE_FILE_NAME: &str = "lark-profile-console.exe";
 pub const AUTOSTART_VALUE_NAME: &str = "Lark Profile Console";
+pub const HOST_BOOTSTRAP_TASK_NAME: &str = "LarkSwitch Host Bootstrap";
+pub const VISIBLE_HOST_BOOTSTRAP_TASK_NAME: &str = "LarkSwitch Host Bootstrap Visible";
 #[cfg(windows)]
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 
@@ -77,6 +79,103 @@ pub fn run_command_for_exe(exe: &Path, extra_args: &[&str]) -> String {
         command.push_str(arg);
     }
     command
+}
+
+fn powershell_literal(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+fn host_bootstrap_task_script(exe: &Path) -> String {
+    format!(
+        "$ErrorActionPreference='Stop';\
+         $hiddenAction=New-ScheduledTaskAction -Execute '{}' -Argument '--hidden --host-bootstrap';\
+         $visibleAction=New-ScheduledTaskAction -Execute '{}' -Argument '--host-bootstrap';\
+         $principal=New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited;\
+         $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 72) -MultipleInstances IgnoreNew;\
+         Register-ScheduledTask -TaskName '{}' -Action $hiddenAction -Principal $principal -Settings $settings -Force | Out-Null;\
+         Register-ScheduledTask -TaskName '{}' -Action $visibleAction -Principal $principal -Settings $settings -Force | Out-Null",
+        powershell_literal(&exe.to_string_lossy()),
+        powershell_literal(&exe.to_string_lossy()),
+        powershell_literal(HOST_BOOTSTRAP_TASK_NAME),
+        powershell_literal(VISIBLE_HOST_BOOTSTRAP_TASK_NAME),
+    )
+}
+
+/// Register an on-demand Task Scheduler entry which launches the installed app
+/// outside the caller's inherited registry virtualization. It has no trigger;
+/// the existing Run entry remains the user's autostart preference.
+#[cfg(windows)]
+pub fn pin_host_bootstrap_task(exe: &Path) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+
+    if is_cargo_target_build_exe(exe) || is_packaged_app_virtualized_exe(exe) {
+        return Err(LpcError::Internal(
+            "refusing to register host bootstrap for a cargo target or virtualized exe".into(),
+        ));
+    }
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command"])
+        .arg(host_bootstrap_task_script(exe))
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()?;
+    if !output.status.success() {
+        return Err(LpcError::HostBridgeUnavailable(format!(
+            "could not register the host bootstrap task (exit {}): {}",
+            output.status.code().unwrap_or(1),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn pin_host_bootstrap_task(exe: &Path) -> Result<()> {
+    let _ = exe;
+    Ok(())
+}
+
+/// Ask Task Scheduler to start the trusted host process. The task is registered
+/// by the installed desktop app and deliberately carries no automatic trigger.
+#[cfg(windows)]
+fn run_task(task_name: &str) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+
+    let output = Command::new("schtasks.exe")
+        .args(["/Run", "/TN", task_name])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()?;
+    if !output.status.success() {
+        return Err(LpcError::HostBridgeUnavailable(format!(
+            "could not start the host bootstrap task (exit {}): {}",
+            output.status.code().unwrap_or(1),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn run_host_bootstrap_task() -> Result<()> {
+    run_task(HOST_BOOTSTRAP_TASK_NAME)
+}
+
+#[cfg(windows)]
+pub fn run_visible_host_bootstrap_task() -> Result<()> {
+    run_task(VISIBLE_HOST_BOOTSTRAP_TASK_NAME)
+}
+
+#[cfg(not(windows))]
+pub fn run_host_bootstrap_task() -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn run_visible_host_bootstrap_task() -> Result<()> {
+    Ok(())
 }
 
 pub fn command_targets_desktop(command: &str) -> bool {
@@ -210,6 +309,18 @@ mod tests {
             exe_from_run_command(r"C:\app\lark-profile-console.exe --hidden"),
             Some(PathBuf::from(r"C:\app\lark-profile-console.exe"))
         );
+    }
+
+    #[test]
+    fn host_bootstrap_task_is_on_demand_and_quotes_the_exe() {
+        let script = host_bootstrap_task_script(Path::new(
+            r"C:\Users\O'Brien\Lark Profile Console\lark-profile-console.exe",
+        ));
+        assert!(script.contains("C:\\Users\\O''Brien\\Lark Profile Console"));
+        assert!(script.contains("--hidden --host-bootstrap"));
+        assert!(script.contains("-Argument '--host-bootstrap'"));
+        assert!(script.contains(VISIBLE_HOST_BOOTSTRAP_TASK_NAME));
+        assert!(!script.contains("New-ScheduledTaskTrigger"));
     }
 
     #[cfg(windows)]

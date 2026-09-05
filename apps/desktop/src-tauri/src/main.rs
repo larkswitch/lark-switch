@@ -2,11 +2,12 @@
 
 use lpc_core::show_blocking_message;
 use lpc_core::{
-    check_data_root_consistency, default_official_config_dirs, diagnostics::run_diagnostics,
-    ensure_keychain_snapshot_if_stale, force_verify_for_health, observe_keychain_slots,
-    pin_user_run_autostart, run_credential_backup, start_host_bridge, AccountHealth,
-    AccountService, AppCreationCoordinator, AppCreationProgress, AppCreationStart, AppPaths,
-    AuthCoordinator, AuthFlowStart, AuthProgress, Brand, ControlPlaneSnapshot, DataRootConsistency,
+    bootstrap_host_keychain_view, check_data_root_consistency, default_official_config_dirs,
+    diagnostics::run_diagnostics, ensure_keychain_snapshot_if_stale, force_verify_for_health,
+    observe_keychain_slots, pin_host_bootstrap_task, pin_user_run_autostart, run_credential_backup,
+    run_visible_host_bootstrap_task, start_host_bridge, AccountHealth, AccountService,
+    AppCreationCoordinator, AppCreationProgress, AppCreationStart, AppPaths, AuthCoordinator,
+    AuthFlowStart, AuthProgress, Brand, ControlPlaneSnapshot, DataRootConsistency,
     DiagnosticReport, ExistingAccountImport, ExistingCliCandidate, HealthRefreshOutcome,
     KeychainWatchKind, OfficialCli, PathTakeover, PathTakeoverReport, RoutingGate, RuntimeManager,
     SecretString, SingletonLock, StateStore,
@@ -290,6 +291,9 @@ fn ensure_installed_autostart(app: &AppHandle) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     if let Err(error) = pin_user_run_autostart(&exe, &["--hidden"]) {
         tracing::error!(%error, "failed to pin HKCU Run autostart to the installed exe");
+    }
+    if let Err(error) = pin_host_bootstrap_task(&exe) {
+        tracing::error!(%error, "failed to pin the on-demand host bootstrap task");
     }
     Ok(())
 }
@@ -950,6 +954,8 @@ fn health_label(health: &AccountHealth) -> &'static str {
 }
 
 fn main() {
+    let host_bootstrap =
+        std::env::args_os().any(|arg| arg == std::ffi::OsStr::new("--host-bootstrap"));
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -957,7 +963,7 @@ fn main() {
         ))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .setup(move |app| {
             if let Err(error) = lpc_core::enforce_msix_shim_policy() {
                 show_blocking_message(
                     "larkswitch — 已阻止影子凭据环境",
@@ -965,7 +971,9 @@ fn main() {
                 );
                 return Err(std::io::Error::other(error.to_string()).into());
             }
-            ensure_installed_autostart(app.handle()).map_err(std::io::Error::other)?;
+            if !host_bootstrap {
+                ensure_installed_autostart(app.handle()).map_err(std::io::Error::other)?;
+            }
             let paths =
                 AppPaths::discover().map_err(|error| std::io::Error::other(error.to_string()))?;
             // The app already had a subscriber, writing to a stderr that a
@@ -1016,8 +1024,21 @@ fn main() {
                 Err(error) => return Err(std::io::Error::other(error.to_string()).into()),
             };
 
-            if let Err(error) = lpc_core::ensure_host_keychain_view(&paths) {
+            let host_view = if host_bootstrap {
+                bootstrap_host_keychain_view(&paths)
+            } else {
+                lpc_core::ensure_host_keychain_view(&paths)
+            };
+            if let Err(error) = host_view {
                 tracing::error!(%error, "host keychain view verification failed");
+                if !host_bootstrap {
+                    match run_visible_host_bootstrap_task() {
+                        Ok(()) => std::process::exit(0),
+                        Err(start_error) => {
+                            tracing::error!(%start_error, "trusted visible host bootstrap failed")
+                        }
+                    }
+                }
                 show_blocking_message(
                     "larkswitch — 已阻止影子凭据环境",
                     "当前进程看到的 Windows 注册表与宿主凭据视图不一致。为避免刷新或删除错误副本，larkswitch 已在接触凭据前停止。\n\n请从 Windows Terminal 或开始菜单启动安装版。",

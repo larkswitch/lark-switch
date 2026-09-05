@@ -1,7 +1,7 @@
 use lpc_core::{
     execute_via_host_bridge, inspect_host_keychain_view, is_running_in_msix_package,
-    resolve_execution_override, strip_leading_lpc_flags, try_acquire_cli_keychain_lock, AppPaths,
-    KeychainViewKind, LpcError, RoutingGate, StateStore,
+    resolve_execution_override, run_host_bootstrap_task, strip_leading_lpc_flags,
+    try_acquire_cli_keychain_lock, AppPaths, KeychainViewKind, LpcError, RoutingGate, StateStore,
 };
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -52,7 +52,32 @@ fn run() -> lpc_core::Result<i32> {
             bridge_args.push(std::ffi::OsString::from(selector));
         }
         bridge_args.extend(parsed.forwarded.iter().cloned());
-        let response = execute_via_host_bridge(&paths, &bridge_args)?;
+        let response = match execute_via_host_bridge(&paths, &bridge_args) {
+            Ok(response) => response,
+            Err(LpcError::HostBridgeUnavailable(_)) => {
+                run_host_bootstrap_task()?;
+                let mut last_error = None;
+                let mut response = None;
+                for _ in 0..60 {
+                    std::thread::sleep(Duration::from_millis(250));
+                    match execute_via_host_bridge(&paths, &bridge_args) {
+                        Ok(value) => {
+                            response = Some(value);
+                            break;
+                        }
+                        Err(error) => last_error = Some(error),
+                    }
+                }
+                response.ok_or_else(|| {
+                    last_error.unwrap_or_else(|| {
+                        LpcError::HostBridgeUnavailable(
+                            "the host bootstrap task did not publish its bridge".into(),
+                        )
+                    })
+                })?
+            }
+            Err(error) => return Err(error),
+        };
         print!("{}", response.stdout);
         eprint!("{}", response.stderr);
         let _ = std::io::stdout().flush();

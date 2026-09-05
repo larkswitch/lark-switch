@@ -98,3 +98,7 @@ foreach ($n in '<本次写回的账号标签1>','<本次写回的账号标签2>'
 ## Workspace Gateway
 
 见 `local-workbench-bridge/docs/LARK-USER-TOKEN-GATE.md`：业务前强制 `whoami --as user`。
+
+## 影子环境下的宿主自举
+
+Windows 安装版会注册两个无定时触发器的用户任务：影子环境中的 shim 找不到桌面桥接时按需运行隐藏的 `LarkSwitch Host Bootstrap`；用户从影子入口打开桌面时转交给可见任务。两者都由任务调度器用 `--host-bootstrap` 在宿主注册表视图中补齐标记。普通进程只校验、永不创建或修复标记，不能自行把当前视图认证成宿主。shim 等待桥接就绪后重试原命令，不直接接触影子 keychain。

@@ -215,6 +215,16 @@ fn shadow_registry_commands_are_forwarded_to_the_verified_host_before_cli_launch
         view_check < bridge && bridge < managed_launch,
         "the shadow-view branch must run before any direct official CLI launch"
     );
+    let bootstrap = shim
+        .find("run_host_bootstrap_task()")
+        .expect("an unavailable bridge must request the independently launched host task");
+    let retry = shim
+        .rfind("execute_via_host_bridge(&paths, &bridge_args)")
+        .expect("the shim must retry the bridge after requesting host startup");
+    assert!(
+        bridge < bootstrap && bootstrap < retry && retry < managed_launch,
+        "shadow callers must bootstrap and retry the host before any direct CLI launch"
+    );
 
     let desktop = std::fs::read_to_string(root.join("apps/desktop/src-tauri/src/main.rs"))
         .expect("read desktop source");
@@ -228,6 +238,51 @@ fn shadow_registry_commands_are_forwarded_to_the_verified_host_before_cli_launch
         host_view < host_bridge,
         "the host bridge must start only after the desktop proves its registry view"
     );
+}
+
+#[test]
+fn host_marker_repair_is_only_reached_through_the_explicit_bootstrap_path() {
+    let root = common::repo_root();
+    let desktop = std::fs::read_to_string(root.join("apps/desktop/src-tauri/src/main.rs"))
+        .expect("read desktop source");
+    let task_registration = desktop
+        .find("pin_host_bootstrap_task(&exe)")
+        .expect("installed desktop must register the on-demand host task");
+    let bootstrap_flag = desktop
+        .find("--host-bootstrap")
+        .expect("desktop must recognize the task-only bootstrap flag");
+    let marker_repair = desktop
+        .find("bootstrap_host_keychain_view(&paths)")
+        .expect("the task-only path must repair a missing real-host marker");
+    let normal_guard = desktop
+        .find("lpc_core::ensure_host_keychain_view(&paths)")
+        .expect("normal launches must remain fail-closed");
+    let visible_handoff = desktop
+        .find("run_visible_host_bootstrap_task()")
+        .expect("normal shadow launches must hand off to a visible trusted host");
+
+    assert!(task_registration < marker_repair);
+    assert!(bootstrap_flag < marker_repair && marker_repair < normal_guard);
+    assert!(normal_guard < visible_handoff);
+    assert!(
+        desktop.contains("if !host_bootstrap {\n                ensure_installed_autostart"),
+        "the task-owned host must not replace its own running task"
+    );
+}
+
+#[test]
+fn normal_host_view_verification_never_creates_or_repairs_markers() {
+    let root = common::repo_root();
+    let source = std::fs::read_to_string(root.join("crates/lpc-core/src/keychain_view.rs"))
+        .expect("read keychain view source");
+    let normal = source
+        .split("fn ensure_platform(paths: &AppPaths)")
+        .nth(1)
+        .and_then(|tail| tail.split("fn bootstrap_platform").next())
+        .expect("normal and bootstrap platform functions");
+    assert!(normal.contains("inspect_platform(paths)"));
+    assert!(!normal.contains("write_registry_marker"));
+    assert!(!normal.contains("write_disk_marker"));
 }
 
 #[test]

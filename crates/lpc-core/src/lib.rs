@@ -41,7 +41,9 @@ pub use auth_flow::{AuthCoordinator, AuthFlowStart, AuthProgress};
 pub use autostart::{
     autostart_points_at_install, autostart_uses_cargo_target, expected_installed_desktop_exe,
     is_cargo_target_build_exe, is_packaged_app_virtualized_exe, list_desktop_run_entries,
-    pin_user_run_autostart, AUTOSTART_VALUE_NAME, DESKTOP_EXE_FILE_NAME,
+    pin_host_bootstrap_task, pin_user_run_autostart, run_host_bootstrap_task,
+    run_visible_host_bootstrap_task, AUTOSTART_VALUE_NAME, DESKTOP_EXE_FILE_NAME,
+    HOST_BOOTSTRAP_TASK_NAME, VISIBLE_HOST_BOOTSTRAP_TASK_NAME,
 };
 pub use backup::{
     default_backup_root, list_backups, restore_from_backup, restore_latest, run_credential_backup,
@@ -57,8 +59,8 @@ pub use keychain_guard::{
     inspect_keychain, KeychainBackupReport, KeychainStatus,
 };
 pub use keychain_view::{
-    enforce_host_keychain_view, ensure_host_keychain_view, inspect_host_keychain_view,
-    KeychainViewKind, KeychainViewStatus,
+    bootstrap_host_keychain_view, enforce_host_keychain_view, ensure_host_keychain_view,
+    inspect_host_keychain_view, KeychainViewKind, KeychainViewStatus,
 };
 pub use keychain_watch::{
     classify_keychain_delta, expected_keychain_slots, force_verify_for_health, is_mass_cliff,

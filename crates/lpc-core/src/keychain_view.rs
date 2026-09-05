@@ -46,11 +46,24 @@ struct PersistedMarker {
     marker: Uuid,
 }
 
-/// Called only by the unpackaged desktop owner before any credential work.
-/// Never repairs one side from the other when both do not already exist: a
-/// sandbox must not be able to bless its private registry as the host view.
+/// Normal desktop entry point: verification only. Marker creation and repair
+/// belong exclusively to the Task Scheduler bootstrap path below, so a
+/// shadow-first launch cannot bless its private registry as the host view.
 pub fn ensure_host_keychain_view(paths: &AppPaths) -> Result<KeychainViewStatus> {
     let status = ensure_platform(paths)?;
+    match status.kind {
+        KeychainViewKind::Mismatch => Err(LpcError::KeychainViewMismatch),
+        KeychainViewKind::Uninitialized => Err(LpcError::KeychainViewUninitialized),
+        KeychainViewKind::Unsupported | KeychainViewKind::Host => Ok(status),
+    }
+}
+
+/// Reconcile the marker from a process launched by the on-demand host task.
+/// Normal desktop/shim entry points must keep using `ensure_host_keychain_view`;
+/// only Task Scheduler provides the independent host registry view required to
+/// safely finish a missing side after a shadow-first installation.
+pub fn bootstrap_host_keychain_view(paths: &AppPaths) -> Result<KeychainViewStatus> {
+    let status = bootstrap_platform(paths)?;
     match status.kind {
         KeychainViewKind::Mismatch => Err(LpcError::KeychainViewMismatch),
         KeychainViewKind::Uninitialized => Err(LpcError::KeychainViewUninitialized),
@@ -168,27 +181,41 @@ fn inspect_platform(_paths: &AppPaths) -> Result<KeychainViewStatus> {
 
 #[cfg(windows)]
 fn ensure_platform(paths: &AppPaths) -> Result<KeychainViewStatus> {
+    inspect_platform(paths)
+}
+
+#[cfg(windows)]
+fn bootstrap_platform(paths: &AppPaths) -> Result<KeychainViewStatus> {
     let disk = read_disk_marker(paths)?;
     let registry = read_registry_marker()?;
-    match (disk, registry) {
+    let marker = match (disk, registry) {
         (None, None) => {
             let marker = Uuid::new_v4();
             write_registry_marker(marker)?;
             write_disk_marker(paths, marker)?;
-            Ok(classify(Some(marker), Some(marker)))
+            marker
+        }
+        (Some(marker), None) => {
+            write_registry_marker(marker)?;
+            marker
         }
         (None, Some(marker)) => {
-            // A crash can occur after the registry write and before publishing
-            // the atomic file. Only the desktop owner is allowed to finish it.
             write_disk_marker(paths, marker)?;
-            Ok(classify(Some(marker), Some(marker)))
+            marker
         }
-        (disk, registry) => Ok(classify(disk, registry)),
-    }
+        (Some(disk), Some(registry)) if disk == registry => disk,
+        (Some(_), Some(_)) => return Err(LpcError::KeychainViewMismatch),
+    };
+    Ok(classify(Some(marker), Some(marker)))
 }
 
 #[cfg(not(windows))]
 fn ensure_platform(paths: &AppPaths) -> Result<KeychainViewStatus> {
+    inspect_platform(paths)
+}
+
+#[cfg(not(windows))]
+fn bootstrap_platform(paths: &AppPaths) -> Result<KeychainViewStatus> {
     inspect_platform(paths)
 }
 
