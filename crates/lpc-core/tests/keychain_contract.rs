@@ -264,6 +264,7 @@ fn host_marker_repair_is_only_reached_through_the_explicit_bootstrap_path() {
     assert!(task_registration < marker_repair);
     assert!(bootstrap_flag < marker_repair && marker_repair < normal_guard);
     assert!(normal_guard < visible_handoff);
+    let desktop = desktop.replace("\r\n", "\n");
     assert!(
         desktop.contains("if !host_bootstrap {\n                ensure_installed_autostart"),
         "the task-owned host must not replace its own running task"
