@@ -81,10 +81,12 @@ pub fn run_command_for_exe(exe: &Path, extra_args: &[&str]) -> String {
     command
 }
 
+#[cfg(any(windows, test))]
 fn powershell_literal(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+#[cfg(any(windows, test))]
 fn host_bootstrap_task_script(exe: &Path) -> String {
     format!(
         "$ErrorActionPreference='Stop';\
