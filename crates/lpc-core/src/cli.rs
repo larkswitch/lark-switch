@@ -21,6 +21,30 @@ use uuid::Uuid;
 use wait_timeout::ChildExt;
 use zeroize::Zeroize;
 
+/// LPC already selected an isolated account config. Ambient agent workspace
+/// signals must not redirect the official CLI into a different subdirectory.
+pub fn configure_account_command(command: &mut Command, config_dir: &Path) {
+    for key in [
+        "OPENCLAW_CLI",
+        "OPENCLAW_HOME",
+        "OPENCLAW_STATE_DIR",
+        "OPENCLAW_CONFIG_PATH",
+        "OPENCLAW_SERVICE_MARKER",
+        "OPENCLAW_SERVICE_VERSION",
+        "OPENCLAW_GATEWAY_PORT",
+        "OPENCLAW_SHELL",
+        "HERMES_HOME",
+        "HERMES_QUIET",
+        "HERMES_EXEC_ASK",
+        "HERMES_GATEWAY_TOKEN",
+        "HERMES_SESSION_KEY",
+        "LARK_CHANNEL",
+    ] {
+        command.env_remove(key);
+    }
+    command.env("LARKSUITE_CLI_CONFIG_DIR", config_dir);
+}
+
 #[derive(Default)]
 pub struct SecretString(String);
 
@@ -402,7 +426,7 @@ impl OfficialCli {
         let mut command = Command::new(&self.executable);
         command.args(args);
         if let Some(config_dir) = config_dir {
-            command.env("LARKSUITE_CLI_CONFIG_DIR", config_dir);
+            configure_account_command(&mut command, config_dir);
         }
         command
             .stdin(Stdio::inherit())
@@ -415,7 +439,7 @@ impl OfficialCli {
     fn new_app_creation_command(&self, config_dir: &Path, brand: Brand) -> Command {
         let mut command = Command::new(&self.executable);
         command.args(["config", "init", "--new", "--brand", brand.as_cli_value()]);
-        command.env("LARKSUITE_CLI_CONFIG_DIR", config_dir);
+        configure_account_command(&mut command, config_dir);
         command
     }
 
@@ -493,7 +517,7 @@ impl OfficialCli {
         }
         if let Some(config_dir) = config_dir {
             fs::create_dir_all(config_dir)?;
-            command.env("LARKSUITE_CLI_CONFIG_DIR", config_dir);
+            configure_account_command(&mut command, config_dir);
         }
         command.stdin(if stdin_secret.is_some() {
             Stdio::piped()
@@ -562,6 +586,9 @@ fn acquire_core_cli_keychain_lock() -> Result<CliKeychainGuard> {
     #[cfg(not(test))]
     {
         let paths = AppPaths::discover()?;
+        // Control-plane callers (including lpcctl health checks and OAuth)
+        // bypass the shim. They must not refresh a second, shadow token copy.
+        crate::enforce_host_keychain_view(&paths)?;
         try_acquire_cli_keychain_lock(&paths, Duration::from_secs(5))?
             .ok_or(LpcError::CliKeychainBusy)
     }
@@ -639,6 +666,54 @@ fn ensure_success(output: &ProcessOutput) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn account_command_removes_ambient_workspace_signals() {
+        let mut command = std::process::Command::new("unused");
+        command.env("HERMES_HOME", "foreign-workspace");
+        command.env("HTTPS_PROXY", "http://127.0.0.1:7890");
+        super::configure_account_command(&mut command, std::path::Path::new("account-config"));
+        let env: std::collections::BTreeMap<_, _> = command.get_envs().collect();
+        for key in [
+            "HERMES_HOME",
+            "HERMES_QUIET",
+            "HERMES_EXEC_ASK",
+            "HERMES_GATEWAY_TOKEN",
+            "HERMES_SESSION_KEY",
+            "OPENCLAW_CLI",
+            "OPENCLAW_HOME",
+            "OPENCLAW_STATE_DIR",
+            "OPENCLAW_CONFIG_PATH",
+            "OPENCLAW_SERVICE_MARKER",
+            "OPENCLAW_SERVICE_VERSION",
+            "OPENCLAW_GATEWAY_PORT",
+            "OPENCLAW_SHELL",
+            "LARK_CHANNEL",
+        ] {
+            assert_eq!(env.get(std::ffi::OsStr::new(key)), Some(&None), "{key}");
+        }
+        assert_eq!(
+            env.get(std::ffi::OsStr::new("HTTPS_PROXY")),
+            Some(&Some(std::ffi::OsStr::new("http://127.0.0.1:7890")))
+        );
+        assert_eq!(
+            env.get(std::ffi::OsStr::new("LARKSUITE_CLI_CONFIG_DIR")),
+            Some(&Some(std::ffi::OsStr::new("account-config")))
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn account_command_child_cannot_inherit_hermes_workspace() {
+        let mut command = std::process::Command::new("cmd.exe");
+        command.args([
+            "/d",
+            "/c",
+            "if defined HERMES_HOME (exit /b 9) else (exit /b 0)",
+        ]);
+        command.env("HERMES_HOME", "foreign-workspace");
+        super::configure_account_command(&mut command, std::path::Path::new("account-config"));
+        assert!(command.status().unwrap().success());
+    }
     use super::*;
 
     #[test]

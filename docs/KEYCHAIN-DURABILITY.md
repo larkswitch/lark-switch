@@ -27,6 +27,16 @@ OAuth **不能**永久本地化。可做到：
 
 ## 自动防护（代码）
 
+### 异常关机与刷新边界
+
+Windows 的注册表写入默认延迟落盘。官方 CLI 完成刷新后，LPC 在释放共享凭据锁前比较 keychain 的修改时间和槽位数；有变化才调用 `RegFlushKey`，避免每次只读检查都刷整个 hive。成功和失败分别记录 `keychain changes flushed to disk` / `keychain disk flush failed after CLI exit`。它不读取 token，不回灌备份，也不在落盘失败时重放已经执行过的业务命令。
+
+这只能收窄“子进程已保存新凭据，但操作系统还未持久化”的窗口，**不能保证服务端已轮换、客户端尚未收到或保存响应时的突然断电可恢复**。旧 refresh token 可能已不可用；遇到这种情况仍需本人重新授权。
+
+宿主视图检查同时覆盖 Shim 和核心 CLI 启动入口。影子环境中的 `lpcctl` 健康检查会拒绝执行，也不会把共享账号状态改成失败；请在正常宿主中运行管理操作。
+
+参考：[Microsoft RegFlushKey 文档](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regflushkey)。
+
 | 机制 | 位置 |
 | --- | --- |
 | `inspect_keychain()` 计数槽位（不读密文） | `lpc-core/src/keychain_guard.rs` |

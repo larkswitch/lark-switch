@@ -306,6 +306,59 @@ fn desktop_establishes_host_view_before_backing_up_or_inspecting_credentials() {
     );
 }
 
+#[test]
+fn control_plane_cli_checks_host_view_before_taking_the_keychain_lock() {
+    let root = common::repo_root();
+    let source = std::fs::read_to_string(root.join("crates/lpc-core/src/cli.rs")).unwrap();
+    let gate = source
+        .split("fn acquire_core_cli_keychain_lock()")
+        .nth(1)
+        .unwrap();
+    let check = gate
+        .find("crate::enforce_host_keychain_view(&paths)?")
+        .unwrap();
+    let lock = gate.find("try_acquire_cli_keychain_lock(&paths").unwrap();
+    assert!(check < lock);
+    for entry in [
+        "pub fn run_interactive",
+        "pub fn spawn_new_app_creation",
+        "fn run_capture_internal",
+    ] {
+        let body = source
+            .split(entry)
+            .nth(1)
+            .unwrap()
+            .split("\n    fn ")
+            .next()
+            .unwrap();
+        assert!(
+            body.contains("acquire_core_cli_keychain_lock()?"),
+            "{entry}"
+        );
+    }
+}
+
+#[test]
+fn cli_changes_are_flushed_before_the_shared_lock_is_released() {
+    let root = common::repo_root();
+    let source = std::fs::read_to_string(root.join("crates/lpc-core/src/locking.rs")).unwrap();
+    let drop_body = source
+        .split("impl Drop for CliKeychainGuard")
+        .nth(1)
+        .unwrap()
+        .split("pub fn cli_keychain_lock_path")
+        .next()
+        .unwrap();
+    assert!(
+        drop_body.find("flush_keychain_if_changed").unwrap()
+            < drop_body.find("FileExt::unlock").unwrap()
+    );
+    let durability =
+        std::fs::read_to_string(root.join("crates/lpc-core/src/keychain_guard.rs")).unwrap();
+    assert!(durability.contains("if before == after || after.is_none()"));
+    assert!(durability.contains("RegFlushKey(key.raw_handle() as _)"));
+}
+
 fn scanned_files(root: &std::path::Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = SCANNED_SOURCE_DIRS
         .iter()

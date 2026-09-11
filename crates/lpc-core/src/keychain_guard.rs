@@ -74,6 +74,69 @@ pub fn inspect_keychain() -> KeychainStatus {
     status
 }
 
+/// Metadata only: never read or interpret a credential to detect a rotation.
+#[cfg(all(windows, not(test)))]
+pub(crate) fn keychain_write_stamp() -> std::io::Result<Option<(u64, u32)>> {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let key = match RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(r"Software\LarkCli\keychain\lark-cli")
+    {
+        Ok(key) => key,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let info = key.query_info()?;
+    let time = (u64::from(info.last_write_time.dwHighDateTime) << 32)
+        | u64::from(info.last_write_time.dwLowDateTime);
+    Ok(Some((time, info.values)))
+}
+
+/// RegSetValue is visible immediately but Windows normally persists it lazily.
+/// Flush only after a change, while the CLI lock still excludes another refresh.
+/// This does not alter any registry value or replay a snapshot. It closes the
+/// post-command lazy-write window, not a crash during the OAuth exchange itself.
+#[cfg(all(windows, not(test)))]
+pub(crate) fn flush_keychain_if_changed(before: Option<(u64, u32)>) -> std::io::Result<()> {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let after = keychain_write_stamp()?;
+    if before == after || after.is_none() {
+        return Ok(());
+    }
+    let key =
+        RegKey::predef(HKEY_CURRENT_USER).open_subkey(r"Software\LarkCli\keychain\lark-cli")?;
+    flush_registry_key(&key)?;
+    tracing::info!("keychain changes flushed to disk");
+    Ok(())
+}
+
+#[cfg(windows)]
+fn flush_registry_key(key: &winreg::RegKey) -> std::io::Result<()> {
+    // RegFlushKey needs QUERY_VALUE access, not a writable key handle.
+    let status =
+        unsafe { windows_sys::Win32::System::Registry::RegFlushKey(key.raw_handle() as _) };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::from_raw_os_error(status as i32))
+    }
+}
+
+#[cfg(all(windows, test))]
+#[test]
+fn registry_flush_works_with_read_only_handle_to_disposable_key() {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let path = format!(r"Software\LarkSwitchTests\flush-{}", uuid::Uuid::new_v4());
+    let (key, _) = hkcu.create_subkey(&path).unwrap();
+    key.set_value("test", &1u32).unwrap();
+    drop(key);
+    let read_only = hkcu.open_subkey(&path).unwrap();
+    flush_registry_key(&read_only).unwrap();
+    assert_eq!(read_only.get_value::<u32, _>("test").unwrap(), 1);
+    drop(read_only);
+    hkcu.delete_subkey(&path).unwrap();
+}
+
 /// Snapshot the official CLI keychain registry branch. Best-effort API surface.
 pub fn backup_keychain_registry(reason: &str) -> Result<KeychainBackupReport> {
     let dir = default_keychain_backup_dir()?;

@@ -17,6 +17,16 @@
 7. Sign Windows artifacts; sign and notarize macOS artifacts.
 8. Run install/upgrade/uninstall smoke on clean VMs.
 
+### Windows manual replacement
+
+Back up and replace the desktop **and its adjacent sidecars** (`lark-cli.exe`,
+`lpcctl.exe`, and any installed `larkswitch.exe` alias), as well as the managed
+`data/bin` copies. A new desktop with old adjacent sidecars fails its startup
+route-repair version check even when the managed bin currently works. Restart
+the installed desktop, compare every deployed file with the build SHA256, and
+verify startup logs contain no packaged-shim version mismatch. Build the desktop
+with Tauri, never with a plain Cargo release build.
+
 ## Signing inputs
 
 The project owner must provision:

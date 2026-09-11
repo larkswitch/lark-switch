@@ -110,9 +110,10 @@ fn run() -> lpc_core::Result<i32> {
     let keychain_lock = try_acquire_cli_keychain_lock(&paths, Duration::from_secs(30))?
         .ok_or(LpcError::CliKeychainBusy)?;
 
-    let status = Command::new(&managed)
+    let mut command = Command::new(&managed);
+    lpc_core::cli::configure_account_command(&mut command, &route.account.config_dir);
+    let status = command
         .args(&parsed.forwarded)
-        .env("LARKSUITE_CLI_CONFIG_DIR", &route.account.config_dir)
         .env("LPC_ACTIVE_ACCOUNT_ID", route.account.id.to_string())
         .env("LPC_ACTIVE_APP_ID", &route.app.app_id)
         .env("LPC_ROUTE_GENERATION", route.generation.to_string())

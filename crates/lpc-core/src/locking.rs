@@ -25,6 +25,8 @@ const GATE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// All managed lark-cli child processes must hold this for their lifetime.
 pub struct CliKeychainGuard {
     file: Option<File>,
+    #[cfg(all(windows, not(test)))]
+    keychain_stamp: Option<(u64, u32)>,
 }
 
 impl CliKeychainGuard {
@@ -37,6 +39,14 @@ impl CliKeychainGuard {
 impl Drop for CliKeychainGuard {
     fn drop(&mut self) {
         if let Some(file) = self.file.take() {
+            #[cfg(all(windows, not(test)))]
+            if let Err(error) =
+                crate::keychain_guard::flush_keychain_if_changed(self.keychain_stamp)
+            {
+                // The upstream command already ran: report durability failure,
+                // never turn it into an invitation to retry a mutating command.
+                tracing::error!(%error, "keychain disk flush failed after CLI exit");
+            }
             let _ = FileExt::unlock(&file);
         }
     }
@@ -64,7 +74,15 @@ pub fn try_acquire_cli_keychain_lock(
     let deadline = Instant::now() + timeout;
     loop {
         match FileExt::try_lock_exclusive(&file) {
-            Ok(()) => return Ok(Some(CliKeychainGuard { file: Some(file) })),
+            Ok(()) => {
+                #[cfg(all(windows, not(test)))]
+                let keychain_stamp = crate::keychain_guard::keychain_write_stamp()?;
+                return Ok(Some(CliKeychainGuard {
+                    file: Some(file),
+                    #[cfg(all(windows, not(test)))]
+                    keychain_stamp,
+                }));
+            }
             Err(error) if error.kind() == fs2::lock_contended_error().kind() => {
                 if Instant::now() >= deadline {
                     return Ok(None);

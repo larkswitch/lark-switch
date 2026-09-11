@@ -736,6 +736,14 @@ impl AccountService {
             }
         };
 
+        if matches!(
+            &status,
+            Err(LpcError::KeychainViewMismatch | LpcError::KeychainViewUninitialized)
+        ) {
+            // A caller in the wrong registry view has no authority to update
+            // the shared account health, even to mark it as a CLI failure.
+            return Err(status.expect_err("matched keychain view error"));
+        }
         if status.as_ref().err().is_some_and(should_skip_health_update) {
             // A business command holds the shared CLI keychain lock. Skip this
             // round entirely: health and last_verified_at stay untouched.
@@ -763,7 +771,10 @@ impl AccountService {
                 account.effective_scopes = user.scope;
                 account.last_verified_at = Some(Utc::now());
             }
-            Err(_) => account.health = AccountHealth::CliFailure,
+            Err(error) => {
+                tracing::warn!(account_id = %account_id, error = %crate::redact::redact_text(&error.to_string()), "account health CLI check failed");
+                account.health = AccountHealth::CliFailure;
+            }
         }
         account.updated_at = Utc::now();
         let result = account.clone();

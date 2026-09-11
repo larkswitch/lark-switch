@@ -108,7 +108,7 @@ const PAIRED_IDENTIFIERS: &[PairedIdentifier] = &[
     PairedIdentifier {
         literal: "LARKSUITE_CLI_CONFIG_DIR",
         docs: &["README.md", "docs/ARCHITECTURE.md"],
-        code: Some("crates/lpc-shim/src/main.rs"),
+        code: Some("crates/lpc-core/src/cli.rs"),
         code_spelling: None,
     },
     PairedIdentifier {
