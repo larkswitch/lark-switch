@@ -973,6 +973,17 @@ fn main() {
             }
             if !host_bootstrap {
                 ensure_installed_autostart(app.handle()).map_err(std::io::Error::other)?;
+                #[cfg(windows)]
+                {
+                    // A matching registry marker can be inherited by an overlay.
+                    // Always detach normal launches through the scheduled host.
+                    if std::env::args_os().any(|arg| arg == "--hidden") {
+                        lpc_core::run_host_bootstrap_task().map_err(std::io::Error::other)?;
+                    } else {
+                        run_visible_host_bootstrap_task().map_err(std::io::Error::other)?;
+                    }
+                    std::process::exit(0);
+                }
             }
             let paths =
                 AppPaths::discover().map_err(|error| std::io::Error::other(error.to_string()))?;

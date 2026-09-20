@@ -766,7 +766,13 @@ impl AccountService {
             .ok_or_else(|| LpcError::AccountNotFound(account_id.to_string()))?;
         match status {
             Ok(result) => {
+                if !result.stderr.trim().is_empty() {
+                    tracing::warn!(account_id = %account_id, detail = %crate::redact::redact_text(&result.stderr), "account health CLI diagnostic");
+                }
                 let user = result.value.identities.user;
+                if !user.available {
+                    tracing::warn!(account_id = %account_id, status = %user.status, detail = %crate::redact::redact_text(&user.message), "account identity unavailable");
+                }
                 account.health = map_identity_status_to_health(&user);
                 account.effective_scopes = user.scope;
                 account.last_verified_at = Some(Utc::now());

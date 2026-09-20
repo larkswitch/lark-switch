@@ -58,7 +58,7 @@ export const api = {
   completeAuthorization: (flowId: string) =>
     invoke<AuthProgress>('complete_authorization', { flowId }),
   cancelAuthorization: (flowId: string) => invoke<void>('cancel_authorization', { flowId }),
-  checkAccount: (accountId: string) => invoke('check_account', { accountId }),
+  checkAccount: (accountId: string) => invoke<AccountRecord>('check_account', { accountId }),
   removeAccount: (accountId: string) => invoke<void>('remove_account', { accountId }),
   diagnose: () => invoke<DiagnosticReport>('diagnose'),
   runtimeIdentity: () => invoke<RuntimeIdentity>('runtime_identity'),

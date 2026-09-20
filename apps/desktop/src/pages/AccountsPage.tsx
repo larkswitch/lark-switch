@@ -411,9 +411,15 @@ export function AccountsPage(props: AccountsPageProps) {
                   Toast.success(copy.accounts.commandCopied);
                 })}
                 onCheck={() => run('check', async () => {
-                  await api.checkAccount(selected.account.id);
+                  const checked = await api.checkAccount(selected.account.id);
                   await props.onReload();
-                  Toast.success(copy.accounts.checked);
+                  if (checked.health === 'ready' || checked.health === 'refreshable') {
+                    Toast.success(copy.accounts.checked);
+                  } else if (checked.health === 'reauth_required') {
+                    Toast.error('体检发现登录凭据不可用，请重新授权。');
+                  } else {
+                    Toast.warning('体检尚未确认账号可用，请查看账号状态或稍后重试。');
+                  }
                 })}
                 onSwitch={props.onSwitch}
                 onReauth={props.onReauth}

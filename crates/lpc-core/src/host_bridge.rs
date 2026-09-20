@@ -9,7 +9,7 @@ use crate::error::{LpcError, Result};
 use crate::paths::AppPaths;
 use serde::{Deserialize, Serialize};
 
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 3;
 #[cfg(any(windows, test))]
 const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
 #[cfg(windows)]
@@ -26,11 +26,52 @@ fn configure_host_bridge_child(command: &mut std::process::Command) {
     command.creation_flags(host_bridge_child_creation_flags());
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct HostBridgeRequest {
     version: u32,
+    target: HostBridgeTarget,
     args: Vec<String>,
     stdin_utf8: Option<String>,
+    current_dir: std::path::PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+enum HostBridgeTarget {
+    OfficialCli,
+    Control,
+}
+
+/// An environment flag alone is not authority: require the actual parent to be
+/// the installed desktop, launched in the Task Scheduler bootstrap mode.
+#[cfg(windows)]
+pub(crate) fn is_host_bridge_child() -> bool {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let Some(expected_pid) = std::env::var("LPC_HOST_EXECUTOR_PID")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+    else {
+        return false;
+    };
+    let mut system = System::new();
+    let current = Pid::from_u32(std::process::id());
+    let expected = Pid::from_u32(expected_pid);
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[current, expected]),
+        ProcessRefreshKind::new()
+            .with_exe(UpdateKind::Always)
+            .with_cmd(UpdateKind::Always),
+    );
+    let actual_parent = system.process(current).and_then(|process| process.parent());
+    let Some(parent) = system.process(expected) else {
+        return false;
+    };
+    let installed =
+        crate::expected_installed_desktop_exe().and_then(|path| path.canonicalize().ok());
+    let parent_exe = parent.exe().and_then(|path| path.canonicalize().ok());
+    actual_parent == Some(expected)
+        && installed.is_some()
+        && parent_exe == installed
+        && parent.cmd().iter().any(|arg| arg == "--host-bootstrap")
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,6 +91,21 @@ pub fn execute_via_host_bridge(
     paths: &AppPaths,
     args: &[std::ffi::OsString],
 ) -> Result<HostBridgeResponse> {
+    execute_target(paths, args, HostBridgeTarget::OfficialCli)
+}
+
+pub fn execute_control_via_host_bridge(
+    paths: &AppPaths,
+    args: &[std::ffi::OsString],
+) -> Result<HostBridgeResponse> {
+    execute_target(paths, args, HostBridgeTarget::Control)
+}
+
+fn execute_target(
+    paths: &AppPaths,
+    args: &[std::ffi::OsString],
+    target: HostBridgeTarget,
+) -> Result<HostBridgeResponse> {
     let args = args
         .iter()
         .map(|value| {
@@ -65,20 +121,39 @@ pub fn execute_via_host_bridge(
     let stdin_utf8 = read_requested_stdin(&args)?;
     #[cfg(not(windows))]
     let stdin_utf8 = None;
-    platform::execute(
-        paths,
-        HostBridgeRequest {
-            version: PROTOCOL_VERSION,
-            args,
-            stdin_utf8,
-        },
-    )
+    let request = HostBridgeRequest {
+        version: PROTOCOL_VERSION,
+        target,
+        args,
+        stdin_utf8,
+        current_dir: std::env::current_dir()?,
+    };
+    match platform::execute(paths, request.clone()) {
+        Err(LpcError::HostBridgeUnavailable(_)) if target == HostBridgeTarget::Control => {
+            crate::run_host_bootstrap_task()?;
+            for _ in 0..60 {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                // Reuse the captured stdin; a connection retry must not read it twice.
+                match platform::execute(paths, request.clone()) {
+                    Err(LpcError::HostBridgeUnavailable(_)) => continue,
+                    result => return result,
+                }
+            }
+            Err(LpcError::HostBridgeUnavailable(
+                "the scheduled desktop host did not become available".into(),
+            ))
+        }
+        result => result,
+    }
 }
 
 #[cfg(any(windows, test))]
 fn requests_stdin(args: &[String]) -> bool {
-    args.iter()
-        .any(|arg| arg == "-" || arg.strip_prefix('-').is_some_and(|arg| arg.ends_with("=-")))
+    args.iter().any(|arg| {
+        arg == "-"
+            || arg.ends_with("-stdin")
+            || arg.strip_prefix('-').is_some_and(|arg| arg.ends_with("=-"))
+    })
 }
 
 #[cfg(windows)]
@@ -217,11 +292,17 @@ mod platform {
             )));
         }
 
-        let shim = paths.bin_dir().join("lark-cli.exe");
+        let shim = paths.bin_dir().join(match request.target {
+            HostBridgeTarget::OfficialCli => "lark-cli.exe",
+            HostBridgeTarget::Control => "lpcctl.exe",
+        });
         let mut command = Command::new(&shim);
         configure_host_bridge_child(&mut command);
         command
             .args(&request.args)
+            .current_dir(&request.current_dir)
+            .env("LPC_HOST_EXECUTOR_PID", std::process::id().to_string())
+            .env("LPC_HOME", paths.root())
             .stdin(if request.stdin_utf8.is_some() {
                 Stdio::piped()
             } else {
@@ -241,6 +322,7 @@ mod platform {
                 stderr: format!("[LPC_HOST_BRIDGE_FAILED] {error}\n"),
             },
         };
+        tracing::info!(target = ?request.target, exit_code = response.exit_code, "host CLI bridge request completed");
         // lpc-allow-raw-write: framed bytes go to an ephemeral named pipe, not persistent state.
         pipe.write_all(&encode_frame(&response)?)?;
         pipe.flush()?;
@@ -349,24 +431,41 @@ mod platform {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[test]
+    fn environment_hint_cannot_authorize_an_unrelated_process() {
+        let old = std::env::var_os("LPC_HOST_EXECUTOR_PID");
+        std::env::set_var("LPC_HOST_EXECUTOR_PID", std::process::id().to_string());
+        assert!(!is_host_bridge_child());
+        match old {
+            Some(value) => std::env::set_var("LPC_HOST_EXECUTOR_PID", value),
+            None => std::env::remove_var("LPC_HOST_EXECUTOR_PID"),
+        }
+    }
+
     #[test]
     fn framed_protocol_round_trips_unicode_arguments() {
         let request = HostBridgeRequest {
             version: PROTOCOL_VERSION,
+            target: HostBridgeTarget::Control,
             args: vec!["--lpc-account".into(), "道庸".into(), "whoami".into()],
             stdin_utf8: Some("{\"中文\":true}\n".into()),
+            current_dir: std::path::PathBuf::from("workspace"),
         };
         let frame = encode_frame(&request).unwrap();
         let decoded: HostBridgeRequest = decode_frame(&mut frame.as_slice()).unwrap();
         assert_eq!(decoded.version, PROTOCOL_VERSION);
         assert_eq!(decoded.args, request.args);
         assert_eq!(decoded.stdin_utf8, request.stdin_utf8);
+        assert_eq!(decoded.target, request.target);
+        assert_eq!(decoded.current_dir, request.current_dir);
     }
 
     #[test]
     fn stdin_is_only_captured_for_explicit_stdin_arguments() {
         assert!(requests_stdin(&["--cells=-".into()]));
         assert!(requests_stdin(&["--cells".into(), "-".into()]));
+        assert!(requests_stdin(&["--app-secret-stdin".into()]));
         assert!(!requests_stdin(&["--cells=@payload.json".into()]));
         assert!(!requests_stdin(&[
             "whoami".into(),

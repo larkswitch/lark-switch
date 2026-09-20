@@ -135,11 +135,7 @@ pub fn run_diagnostics_with(store: &StateStore, level: RedactionLevel) -> Result
         let config = account.config_dir.join("config.json");
         checks.push(DiagnosticCheck {
             id: format!("account_{}", account.id),
-            status: if config.is_file() {
-                DiagnosticStatus::Pass
-            } else {
-                DiagnosticStatus::Fail
-            },
+            status: account_diagnostic_status(config.is_file(), &account.health),
             summary: format!("Account {}", account.display_name),
             detail: format!(
                 "config={}, runningCommands={}, health={:?}",
@@ -246,6 +242,23 @@ fn keychain_slot_check(
             keychain.entry_count
         ),
         detail: keychain.detail.clone(),
+    }
+}
+
+fn account_diagnostic_status(
+    config_exists: bool,
+    health: &crate::AccountHealth,
+) -> DiagnosticStatus {
+    use crate::AccountHealth;
+    if !config_exists {
+        return DiagnosticStatus::Fail;
+    }
+    match health {
+        AccountHealth::Ready | AccountHealth::Refreshable => DiagnosticStatus::Pass,
+        AccountHealth::ReauthRequired => DiagnosticStatus::Fail,
+        AccountHealth::CliFailure | AccountHealth::TemporaryFailure | AccountHealth::Unknown => {
+            DiagnosticStatus::Warn
+        }
     }
 }
 
@@ -631,6 +644,27 @@ fn same_path(left: &Path, right: &Path) -> bool {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn existing_config_does_not_hide_lost_login() {
+        use crate::AccountHealth;
+        assert_eq!(
+            account_diagnostic_status(true, &AccountHealth::ReauthRequired),
+            DiagnosticStatus::Fail
+        );
+        assert_eq!(
+            account_diagnostic_status(true, &AccountHealth::TemporaryFailure),
+            DiagnosticStatus::Warn
+        );
+        assert_eq!(
+            account_diagnostic_status(true, &AccountHealth::Ready),
+            DiagnosticStatus::Pass
+        );
+        assert_eq!(
+            account_diagnostic_status(false, &AccountHealth::Ready),
+            DiagnosticStatus::Fail
+        );
+    }
 
     #[test]
     fn discovers_windows_wrappers_and_extensionless_commands() {

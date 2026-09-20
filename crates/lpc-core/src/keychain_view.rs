@@ -24,6 +24,17 @@ const REGISTRY_KEY: &str = r"Software\LarkProfileConsole\HostKeychainView";
 #[cfg(windows)]
 const REGISTRY_VALUE: &str = "Marker";
 
+// A registry overlay may inherit the marker while shadowing individual token
+// values. Marker equality is necessary, but never proof of host execution.
+#[cfg(windows)]
+static BOOTSTRAPPED_HOST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(windows)]
+fn trusted_host_execution() -> bool {
+    BOOTSTRAPPED_HOST.load(std::sync::atomic::Ordering::Acquire)
+        || crate::host_bridge::is_host_bridge_child()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeychainViewKind {
     Unsupported,
@@ -168,7 +179,19 @@ fn write_registry_marker(marker: Uuid) -> Result<()> {
 
 #[cfg(windows)]
 fn inspect_platform(paths: &AppPaths) -> Result<KeychainViewStatus> {
-    Ok(classify(read_disk_marker(paths)?, read_registry_marker()?))
+    Ok(require_host_execution(
+        classify(read_disk_marker(paths)?, read_registry_marker()?),
+        trusted_host_execution(),
+    ))
+}
+
+#[cfg(any(windows, test))]
+fn require_host_execution(mut status: KeychainViewStatus, trusted: bool) -> KeychainViewStatus {
+    if status.kind == KeychainViewKind::Host && !trusted {
+        status.kind = KeychainViewKind::Mismatch;
+        status.detail = "Registry marker matches, but copy-on-write token isolation cannot be excluded. Execute through the scheduled desktop host.".into();
+    }
+    status
 }
 
 #[cfg(not(windows))]
@@ -206,6 +229,7 @@ fn bootstrap_platform(paths: &AppPaths) -> Result<KeychainViewStatus> {
         (Some(disk), Some(registry)) if disk == registry => disk,
         (Some(_), Some(_)) => return Err(LpcError::KeychainViewMismatch),
     };
+    BOOTSTRAPPED_HOST.store(true, std::sync::atomic::Ordering::Release);
     Ok(classify(Some(marker), Some(marker)))
 }
 
@@ -222,6 +246,24 @@ fn bootstrap_platform(paths: &AppPaths) -> Result<KeychainViewStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inherited_marker_is_not_proof_of_host_execution() {
+        let marker = Uuid::new_v4();
+        let matched = classify(Some(marker), Some(marker));
+        assert_eq!(
+            require_host_execution(matched.clone(), false).kind,
+            KeychainViewKind::Mismatch
+        );
+        assert_eq!(
+            require_host_execution(matched, true).kind,
+            KeychainViewKind::Host
+        );
+        assert_eq!(
+            require_host_execution(classify(Some(marker), None), true).kind,
+            KeychainViewKind::Mismatch
+        );
+    }
 
     #[test]
     fn identical_markers_identify_the_host_view() {

@@ -264,6 +264,14 @@ fn main() {
 
 fn run(cli: Cli) -> lpc_core::Result<()> {
     let paths = AppPaths::discover()?;
+    #[cfg(windows)]
+    if lpc_core::inspect_host_keychain_view(&paths).kind == lpc_core::KeychainViewKind::Mismatch {
+        let args: Vec<_> = std::env::args_os().skip(1).collect();
+        let response = lpc_core::host_bridge::execute_control_via_host_bridge(&paths, &args)?;
+        print!("{}", response.stdout);
+        eprint!("{}", response.stderr);
+        std::process::exit(response.exit_code);
+    }
     // After path discovery, because the log lives under LPC_HOME, and ignoring
     // the result on purpose: a read-only or full disk must not turn a working
     // command into a failed one. Replaces the previous stderr subscriber —

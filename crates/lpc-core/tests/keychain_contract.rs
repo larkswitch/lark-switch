@@ -263,7 +263,9 @@ fn host_marker_repair_is_only_reached_through_the_explicit_bootstrap_path() {
 
     assert!(task_registration < marker_repair);
     assert!(bootstrap_flag < marker_repair && marker_repair < normal_guard);
-    assert!(normal_guard < visible_handoff);
+    // Normal launches now hand off before touching the registry or taking the
+    // singleton lock, even if their inherited marker happens to match.
+    assert!(visible_handoff < marker_repair);
     let desktop = desktop.replace("\r\n", "\n");
     assert!(
         desktop.contains("if !host_bootstrap {\n                ensure_installed_autostart"),
