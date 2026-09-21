@@ -11,8 +11,10 @@ use std::path::{Path, PathBuf};
 
 pub const DESKTOP_EXE_FILE_NAME: &str = "lark-profile-console.exe";
 pub const AUTOSTART_VALUE_NAME: &str = "Lark Profile Console";
-pub const HOST_BOOTSTRAP_TASK_NAME: &str = "LarkSwitch Host Bootstrap";
-pub const VISIBLE_HOST_BOOTSTRAP_TASK_NAME: &str = "LarkSwitch Host Bootstrap Visible";
+// A new registration identity also recovers installations whose legacy task
+// cache survived antivirus cleanup but returns ERROR_INVALID_PARAMETER on Run.
+pub const HOST_BOOTSTRAP_TASK_NAME: &str = "LarkSwitch Desktop Host v2";
+pub const VISIBLE_HOST_BOOTSTRAP_TASK_NAME: &str = "LarkSwitch Desktop Host Visible v2";
 #[cfg(windows)]
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 
@@ -93,7 +95,7 @@ fn host_bootstrap_task_script(exe: &Path) -> String {
          $hiddenAction=New-ScheduledTaskAction -Execute '{}' -Argument '--hidden --host-bootstrap';\
          $visibleAction=New-ScheduledTaskAction -Execute '{}' -Argument '--host-bootstrap';\
          $principal=New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited;\
-         $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 72) -MultipleInstances IgnoreNew;\
+         $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries;\
          Register-ScheduledTask -TaskName '{}' -Action $hiddenAction -Principal $principal -Settings $settings -Force | Out-Null;\
          Register-ScheduledTask -TaskName '{}' -Action $visibleAction -Principal $principal -Settings $settings -Force | Out-Null",
         powershell_literal(&exe.to_string_lossy()),
@@ -117,11 +119,12 @@ pub fn pin_host_bootstrap_task(exe: &Path) -> Result<()> {
             "refusing to register host bootstrap for a cargo target or virtualized exe".into(),
         ));
     }
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command"])
-        .arg(host_bootstrap_task_script(exe))
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()?;
+    let output = bounded_task_command(
+        Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command"])
+            .arg(host_bootstrap_task_script(exe))
+            .creation_flags(CREATE_NO_WINDOW),
+    )?;
     if !output.status.success() {
         return Err(LpcError::HostBridgeUnavailable(format!(
             "could not register the host bootstrap task (exit {}): {}",
@@ -130,6 +133,27 @@ pub fn pin_host_bootstrap_task(exe: &Path) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn bounded_task_command(command: &mut std::process::Command) -> Result<std::process::Output> {
+    use std::process::Stdio;
+    use wait_timeout::ChildExt;
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    if child
+        .wait_timeout(std::time::Duration::from_secs(20))?
+        .is_none()
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(LpcError::HostBridgeUnavailable(
+            "Windows Task Scheduler did not respond within 20 seconds".into(),
+        ));
+    }
+    Ok(child.wait_with_output()?)
 }
 
 #[cfg(not(windows))]
@@ -146,10 +170,11 @@ fn run_task(task_name: &str) -> Result<()> {
     use std::process::Command;
     use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 
-    let output = Command::new("schtasks.exe")
-        .args(["/Run", "/TN", task_name])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()?;
+    let output = bounded_task_command(
+        Command::new("schtasks.exe")
+            .args(["/Run", "/TN", task_name])
+            .creation_flags(CREATE_NO_WINDOW),
+    )?;
     if !output.status.success() {
         return Err(LpcError::HostBridgeUnavailable(format!(
             "could not start the host bootstrap task (exit {}): {}",

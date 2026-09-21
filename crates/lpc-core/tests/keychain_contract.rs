@@ -289,6 +289,21 @@ fn normal_host_view_verification_never_creates_or_repairs_markers() {
 }
 
 #[test]
+fn bootstrap_flag_cannot_bless_an_agent_registry_view() {
+    let root = common::repo_root();
+    let source =
+        std::fs::read_to_string(root.join("crates/lpc-core/src/keychain_view.rs")).unwrap();
+    let bootstrap = source
+        .split("fn bootstrap_platform(paths: &AppPaths)")
+        .nth(1)
+        .unwrap();
+    let guard = bootstrap.find("if !launched_by_task_scheduler()").unwrap();
+    assert!(guard < bootstrap.find("read_disk_marker(paths)").unwrap());
+    assert!(guard < bootstrap.find("write_registry_marker(marker)").unwrap());
+    assert!(source.contains("QueryServiceStatusEx"));
+}
+
+#[test]
 fn desktop_establishes_host_view_before_backing_up_or_inspecting_credentials() {
     let root = common::repo_root();
     let desktop = std::fs::read_to_string(root.join("apps/desktop/src-tauri/src/main.rs"))

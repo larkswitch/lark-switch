@@ -15,6 +15,27 @@
 
 mod common;
 
+#[test]
+fn window_creation_follows_singleton_and_precedes_credential_work() {
+    let root = common::repo_root();
+    let config: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("apps/desktop/src-tauri/tauri.conf.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        config["app"]["windows"][0]["create"], false,
+        "automatic WebView creation blocks all startup guards when the old browser hangs"
+    );
+    let desktop = std::fs::read_to_string(root.join("apps/desktop/src-tauri/src/main.rs")).unwrap();
+    let lock = desktop.find("let webview_lock =").unwrap();
+    let cleanup = desktop.find("startup::clean_orphan_webviews").unwrap();
+    let window = desktop.find("WebviewWindowBuilder::from_config").unwrap();
+    let credentials = desktop
+        .find("bootstrap_host_keychain_view(&paths)")
+        .unwrap();
+    assert!(lock < cleanup && cleanup < window && window < credentials);
+}
+
 /// Set to any value to turn "no release binary present" from skip into failure.
 /// Intended for the release workflow, so the check cannot silently pass.
 const REQUIRE_ARTIFACT_ENV: &str = "LPC_REQUIRE_DEPLOY_ARTIFACT";

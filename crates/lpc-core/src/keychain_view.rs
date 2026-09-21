@@ -209,6 +209,14 @@ fn ensure_platform(paths: &AppPaths) -> Result<KeychainViewStatus> {
 
 #[cfg(windows)]
 fn bootstrap_platform(paths: &AppPaths) -> Result<KeychainViewStatus> {
+    // A command-line flag is not authority. An agent can inherit an isolated
+    // HKCU view even without package identity, and marker values can be copied.
+    // Only the real Schedule service may launch a host that repairs markers or
+    // refreshes credentials. In particular, Start-Process --host-bootstrap from
+    // an agent must fail before any marker or keychain operation.
+    if !launched_by_task_scheduler() {
+        return Err(LpcError::KeychainViewMismatch);
+    }
     let disk = read_disk_marker(paths)?;
     let registry = read_registry_marker()?;
     let marker = match (disk, registry) {
@@ -233,6 +241,60 @@ fn bootstrap_platform(paths: &AppPaths) -> Result<KeychainViewStatus> {
     Ok(classify(Some(marker), Some(marker)))
 }
 
+#[cfg(any(windows, test))]
+fn scheduler_parent_matches(parent: Option<u32>, scheduler_pid: u32) -> bool {
+    scheduler_pid != 0 && parent == Some(scheduler_pid)
+}
+
+#[cfg(windows)]
+fn launched_by_task_scheduler() -> bool {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+    use windows_sys::Win32::System::Services::{
+        CloseServiceHandle, OpenSCManagerW, OpenServiceW, QueryServiceStatusEx, SC_MANAGER_CONNECT,
+        SC_STATUS_PROCESS_INFO, SERVICE_QUERY_STATUS, SERVICE_STATUS_PROCESS,
+    };
+    let current = Pid::from_u32(std::process::id());
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[current]),
+        ProcessRefreshKind::new(),
+    );
+    let parent = system
+        .process(current)
+        .and_then(|process| process.parent())
+        .map(|pid| pid.as_u32());
+    // Query the service manager, rather than trusting a process name or an
+    // environment variable that an ordinary caller could supply.
+    let scheduler_pid = unsafe {
+        let manager = OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT);
+        if manager.is_null() {
+            return false;
+        }
+        let name: Vec<u16> = "Schedule\0".encode_utf16().collect();
+        let service = OpenServiceW(manager, name.as_ptr(), SERVICE_QUERY_STATUS);
+        if service.is_null() {
+            CloseServiceHandle(manager);
+            return false;
+        }
+        let mut status: SERVICE_STATUS_PROCESS = std::mem::zeroed();
+        let mut needed = 0;
+        let ok = QueryServiceStatusEx(
+            service,
+            SC_STATUS_PROCESS_INFO,
+            &mut status as *mut _ as *mut u8,
+            std::mem::size_of_val(&status) as u32,
+            &mut needed,
+        );
+        CloseServiceHandle(service);
+        CloseServiceHandle(manager);
+        if ok == 0 {
+            return false;
+        }
+        status.dwProcessId
+    };
+    scheduler_parent_matches(parent, scheduler_pid)
+}
+
 #[cfg(not(windows))]
 fn ensure_platform(paths: &AppPaths) -> Result<KeychainViewStatus> {
     inspect_platform(paths)
@@ -246,6 +308,14 @@ fn bootstrap_platform(paths: &AppPaths) -> Result<KeychainViewStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bootstrap_requires_the_actual_scheduler_parent() {
+        assert!(scheduler_parent_matches(Some(2700), 2700));
+        assert!(!scheduler_parent_matches(Some(1234), 2700));
+        assert!(!scheduler_parent_matches(None, 2700));
+        assert!(!scheduler_parent_matches(Some(0), 0));
+    }
 
     #[test]
     fn inherited_marker_is_not_proof_of_host_execution() {

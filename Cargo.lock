@@ -2211,11 +2211,12 @@ dependencies = [
 
 [[package]]
 name = "lark-profile-console-desktop"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "lpc-core",
  "serde",
  "serde_json",
+ "sysinfo",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
@@ -2319,7 +2320,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "lpc-core"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2353,7 +2354,7 @@ dependencies = [
 
 [[package]]
 name = "lpc-shim"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "lpc-core",
  "tracing",
@@ -2361,7 +2362,7 @@ dependencies = [
 
 [[package]]
 name = "lpcctl"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "clap",
  "lpc-core",

@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod startup;
+
 use lpc_core::show_blocking_message;
 use lpc_core::{
     bootstrap_host_keychain_view, check_data_root_consistency, default_official_config_dirs,
@@ -39,6 +41,7 @@ struct DesktopState {
     /// Held for the whole process lifetime so a second desktop instance cannot
     /// race on the same data root. Never read; dropped on exit to release.
     _instance_lock: SingletonLock,
+    _webview_lock: SingletonLock,
 }
 
 #[derive(Debug, Deserialize)]
@@ -292,9 +295,7 @@ fn ensure_installed_autostart(app: &AppHandle) -> Result<(), String> {
     if let Err(error) = pin_user_run_autostart(&exe, &["--hidden"]) {
         tracing::error!(%error, "failed to pin HKCU Run autostart to the installed exe");
     }
-    if let Err(error) = pin_host_bootstrap_task(&exe) {
-        tracing::error!(%error, "failed to pin the on-demand host bootstrap task");
-    }
+    pin_host_bootstrap_task(&exe).map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -956,7 +957,7 @@ fn health_label(health: &AccountHealth) -> &'static str {
 fn main() {
     let host_bootstrap =
         std::env::args_os().any(|arg| arg == std::ffi::OsStr::new("--host-bootstrap"));
-    tauri::Builder::default()
+    let result = tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec!["--hidden"]),
@@ -964,6 +965,16 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
+            // tauri.conf disables automatic windows: even a stuck old WebView
+            // cannot block handoff, diagnostics, or duplicate-instance handling.
+            let paths = AppPaths::discover()
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            let _ = lpc_core::init_file_logging(&paths);
+            let hidden = std::env::args_os().any(|arg| arg == "--hidden");
+            if startup::activate_if_running(&paths, hidden)? {
+                tracing::info!(hidden, "desktop launch forwarded to running instance");
+                std::process::exit(0);
+            }
             if let Err(error) = lpc_core::enforce_msix_shim_policy() {
                 show_blocking_message(
                     "larkswitch — 已阻止影子凭据环境",
@@ -985,15 +996,6 @@ fn main() {
                     std::process::exit(0);
                 }
             }
-            let paths =
-                AppPaths::discover().map_err(|error| std::io::Error::other(error.to_string()))?;
-            // The app already had a subscriber, writing to a stderr that a
-            // `windows_subsystem = "windows"` process does not have; every
-            // record below was going nowhere. This replaces it rather than
-            // adding a second one, and a failure here is not worth refusing to
-            // start over.
-            let _ = lpc_core::init_file_logging(&paths);
-
             // Data-safety guard #1: refuse to run against an ambiguous data root.
             // If the machine's persistent LPC_HOME points somewhere other than the
             // root we resolved, the real profiles likely live there; opening this
@@ -1025,15 +1027,23 @@ fn main() {
             {
                 Ok(Some(lock)) => lock,
                 Ok(None) => {
-                    tracing::warn!("another larkswitch instance owns this data root; exiting");
-                    show_blocking_message(
-                        "larkswitch",
-                        "larkswitch 已在运行（同一数据目录只允许一个实例）。请使用已打开的窗口。",
-                    );
+                    if !hidden { startup::request_activation(&paths)?; }
+                    tracing::info!("desktop launch forwarded after singleton race");
                     std::process::exit(0);
                 }
                 Err(error) => return Err(std::io::Error::other(error.to_string()).into()),
             };
+
+            let webview_home = app.path().app_local_data_dir()?;
+            let webview_lock = RoutingGate::new(AppPaths::new(webview_home.clone()))
+                .try_acquire_singleton("desktop-webview")?
+                .ok_or_else(|| std::io::Error::other("另一个数据目录的控制台正在使用界面，请先退出该控制台。"))?;
+            let profile = webview_home.join("EBWebView");
+            startup::clean_orphan_webviews(&profile, &webview_lock);
+            let window_watch = startup::watch_window_creation();
+            tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?.build()?;
+            let _ = window_watch.send(());
+            tracing::info!("desktop window initialized");
 
             let host_view = if host_bootstrap {
                 bootstrap_host_keychain_view(&paths)
@@ -1113,6 +1123,7 @@ fn main() {
             ));
             let app_creation = AppCreationCoordinator::new(account_service.clone());
             let backup_paths = paths.clone();
+            let activation_paths = paths.clone();
             app.manage(DesktopState {
                 paths,
                 store,
@@ -1124,7 +1135,9 @@ fn main() {
                     runtime_change_active: false,
                 }),
                 _instance_lock: instance_lock,
+                _webview_lock: webview_lock,
             });
+            startup::listen_for_activation(app.handle().clone(), activation_paths);
 
             let menu = MenuBuilder::new(app)
                 .item(&MenuItemBuilder::with_id("open", "打开控制台").build(app)?)
@@ -1337,8 +1350,12 @@ fn main() {
             poll_official_app_creation,
             cancel_official_app_creation,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Lark Profile Console");
+        .run(tauri::generate_context!());
+    if let Err(error) = result {
+        tracing::error!(%error, "desktop startup failed");
+        show_blocking_message("larkswitch — 无法启动", &format!("启动失败：{error}\n\n请检查安全软件的拦截记录。详细原因已写入 larkswitch 运行日志。"));
+        std::process::exit(1);
+    }
 }
 
 #[cfg(test)]
