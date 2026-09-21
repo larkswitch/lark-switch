@@ -35,7 +35,7 @@ Get-Process -Name lark-profile-console -ErrorAction SilentlyContinue |
 $profile = Join-Path $env:LOCALAPPDATA 'dev.larkswitch.desktop\EBWebView'
 $profileArg = '--user-data-dir="' + $profile + '"'
 Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" |
-    Where-Object { $_.CommandLine.Contains($profileArg) } |
+    Where-Object { $_.CommandLine -and $_.CommandLine.Contains($profileArg) } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Seconds 2
 foreach ($entry in $entries) {
