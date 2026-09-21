@@ -149,7 +149,11 @@ fn execute_target(
 
 #[cfg(any(windows, test))]
 fn requests_stdin(args: &[String]) -> bool {
-    args.iter().any(|arg| {
+    // Git's helper protocol carries protocol/host/path on stdin implicitly.
+    // The host bridge must preserve it even without a '-' or '*-stdin' flag.
+    args.windows(2).any(|pair| pair[0] == "apps" && pair[1] == "git-credential-helper")
+        && !args.iter().any(|arg| arg == "--help" || arg == "-h")
+        || args.iter().any(|arg| {
         arg == "-"
             || arg.ends_with("-stdin")
             || arg.strip_prefix('-').is_some_and(|arg| arg.ends_with("=-"))
@@ -462,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn stdin_is_only_captured_for_explicit_stdin_arguments() {
+    fn stdin_is_captured_for_explicit_arguments_and_git_helper_protocol() {
         assert!(requests_stdin(&["--cells=-".into()]));
         assert!(requests_stdin(&["--cells".into(), "-".into()]));
         assert!(requests_stdin(&["--app-secret-stdin".into()]));
@@ -472,6 +476,15 @@ mod tests {
             "--as".into(),
             "user".into()
         ]));
+        for operation in ["get", "store", "erase"] {
+            assert!(requests_stdin(&[
+                "--lpc-account".into(), "selected-account".into(),
+                "apps".into(), "git-credential-helper".into(),
+                "--app-id".into(), "app_fixture".into(), operation.into(),
+            ]));
+        }
+        assert!(!requests_stdin(&["apps".into(), "git-credential-helper".into(), "--help".into()]));
+        assert!(!requests_stdin(&["apps".into(), "+git-credential-init".into(), "--app-id".into(), "app_fixture".into()]));
     }
 
     #[test]
