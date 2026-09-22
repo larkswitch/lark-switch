@@ -2211,7 +2211,7 @@ dependencies = [
 
 [[package]]
 name = "lark-profile-console-desktop"
-version = "0.2.14"
+version = "0.2.15"
 dependencies = [
  "lpc-core",
  "serde",
@@ -2320,7 +2320,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "lpc-core"
-version = "0.2.14"
+version = "0.2.15"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2354,7 +2354,7 @@ dependencies = [
 
 [[package]]
 name = "lpc-shim"
-version = "0.2.14"
+version = "0.2.15"
 dependencies = [
  "lpc-core",
  "tracing",
@@ -2362,7 +2362,7 @@ dependencies = [
 
 [[package]]
 name = "lpcctl"
-version = "0.2.14"
+version = "0.2.15"
 dependencies = [
  "clap",
  "lpc-core",

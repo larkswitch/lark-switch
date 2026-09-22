@@ -151,13 +151,14 @@ fn execute_target(
 fn requests_stdin(args: &[String]) -> bool {
     // Git's helper protocol carries protocol/host/path on stdin implicitly.
     // The host bridge must preserve it even without a '-' or '*-stdin' flag.
-    args.windows(2).any(|pair| pair[0] == "apps" && pair[1] == "git-credential-helper")
+    args.windows(2)
+        .any(|pair| pair[0] == "apps" && pair[1] == "git-credential-helper")
         && !args.iter().any(|arg| arg == "--help" || arg == "-h")
         || args.iter().any(|arg| {
-        arg == "-"
-            || arg.ends_with("-stdin")
-            || arg.strip_prefix('-').is_some_and(|arg| arg.ends_with("=-"))
-    })
+            arg == "-"
+                || arg.ends_with("-stdin")
+                || arg.strip_prefix('-').is_some_and(|arg| arg.ends_with("=-"))
+        })
 }
 
 #[cfg(windows)]
@@ -478,13 +479,26 @@ mod tests {
         ]));
         for operation in ["get", "store", "erase"] {
             assert!(requests_stdin(&[
-                "--lpc-account".into(), "selected-account".into(),
-                "apps".into(), "git-credential-helper".into(),
-                "--app-id".into(), "app_fixture".into(), operation.into(),
+                "--lpc-account".into(),
+                "selected-account".into(),
+                "apps".into(),
+                "git-credential-helper".into(),
+                "--app-id".into(),
+                "app_fixture".into(),
+                operation.into(),
             ]));
         }
-        assert!(!requests_stdin(&["apps".into(), "git-credential-helper".into(), "--help".into()]));
-        assert!(!requests_stdin(&["apps".into(), "+git-credential-init".into(), "--app-id".into(), "app_fixture".into()]));
+        assert!(!requests_stdin(&[
+            "apps".into(),
+            "git-credential-helper".into(),
+            "--help".into()
+        ]));
+        assert!(!requests_stdin(&[
+            "apps".into(),
+            "+git-credential-init".into(),
+            "--app-id".into(),
+            "app_fixture".into()
+        ]));
     }
 
     #[test]

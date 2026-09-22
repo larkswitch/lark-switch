@@ -30,7 +30,10 @@ jobs:
         run: cargo clippy -p lpc-core -p lpc-shim -p lpcctl --all-targets -- -D warnings
       - name: Tests
         run: cargo test -p lpc-core -p lpc-shim -p lpcctl
+      # Windows requires an installed, scheduler-verified desktop host; validate
+      # its runtime upgrade through that host during the Windows release gate.
       - name: Real official CLI smoke
+        if: runner.os != 'Windows'
         run: cargo test -p lpc-core --test official_cli_smoke official_cli_binary_and_config_directory_isolation_are_real -- --ignored --nocapture
 
   frontend:

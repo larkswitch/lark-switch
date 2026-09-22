@@ -93,7 +93,7 @@ pub use selector::{
 pub use shim::{install_managed_shim, install_managed_shim_with, ShimInstallOptions};
 pub use store::StateStore;
 
-pub const SUPPORTED_CLI_VERSION: &str = "1.0.86";
+pub const SUPPORTED_CLI_VERSION: &str = "1.0.96";
 /// Recommended plus previously shipped versions still accepted at runtime.
-pub const SUPPORTED_CLI_VERSIONS: &[&str] = &["1.0.86", "1.0.71", "1.0.68"];
+pub const SUPPORTED_CLI_VERSIONS: &[&str] = &["1.0.96", "1.0.86", "1.0.71", "1.0.68"];
 pub const SCHEMA_VERSION: u32 = 1;
