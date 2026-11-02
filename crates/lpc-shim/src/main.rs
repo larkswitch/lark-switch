@@ -1,7 +1,8 @@
 use lpc_core::{
     execute_via_host_bridge, inspect_host_keychain_view, is_running_in_msix_package,
-    resolve_execution_override, run_host_bootstrap_task, strip_leading_lpc_flags,
-    try_acquire_cli_keychain_lock, AppPaths, KeychainViewKind, LpcError, RoutingGate, StateStore,
+    nested_official_cli, resolve_execution_override, run_host_bootstrap_task,
+    strip_leading_lpc_flags, try_acquire_cli_keychain_lock, AppPaths, KeychainViewKind, LpcError,
+    RoutingGate, StateStore, SHIM_OWNER_PID_ENV,
 };
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -31,6 +32,21 @@ fn run() -> lpc_core::Result<i32> {
             "[LPC_MANAGEMENT_GUARDED] {reason}. Use the desktop UI or `larkswitch` / `lpcctl`; set LPC_ALLOW_DIRECT_MANAGEMENT=1 only for recovery."
         );
         return Ok(64);
+    }
+
+    // The enclosing shim already passed every check below and blocks on this
+    // process while holding the lock and possibly the host bridge, so queuing
+    // for either would deadlock. An explicit account selects a different route.
+    if parsed.account_override.is_none() {
+        if let Some(official) = nested_official_cli() {
+            let status = Command::new(&official)
+                .args(&parsed.forwarded)
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()?;
+            return Ok(exit_code(status));
+        }
     }
 
     let override_selector = resolve_execution_override(
@@ -117,6 +133,7 @@ fn run() -> lpc_core::Result<i32> {
         .env("LPC_ACTIVE_ACCOUNT_ID", route.account.id.to_string())
         .env("LPC_ACTIVE_APP_ID", &route.app.app_id)
         .env("LPC_ROUTE_GENERATION", route.generation.to_string())
+        .env(SHIM_OWNER_PID_ENV, std::process::id().to_string())
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())

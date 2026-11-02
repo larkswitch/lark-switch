@@ -177,6 +177,30 @@ fn shim_never_fails_open_when_the_keychain_lock_is_busy() {
 }
 
 #[test]
+fn nested_shim_marker_is_only_published_while_the_keychain_lock_is_held() {
+    let root = common::repo_root();
+    let shim = std::fs::read_to_string(root.join("crates/lpc-shim/src/main.rs"))
+        .expect("read lpc shim source");
+    let lock = shim
+        .find("try_acquire_cli_keychain_lock(&paths")
+        .expect("keychain lock acquisition");
+    let marker = shim
+        .find(".env(SHIM_OWNER_PID_ENV")
+        .expect("nested shim marker");
+    let release = shim
+        .find("drop(keychain_lock)")
+        .expect("keychain lock release");
+    assert!(
+        lock < marker && marker < release,
+        "only a shim holding the lock may let its descendants skip the lock"
+    );
+    assert!(
+        shim.find("nested_official_cli()").expect("nested check") < lock,
+        "a nested shim must not queue for the lock its ancestor holds"
+    );
+}
+
+#[test]
 fn desktop_blocks_msix_before_touching_autostart_or_credentials() {
     let root = common::repo_root();
     let desktop = std::fs::read_to_string(root.join("apps/desktop/src-tauri/src/main.rs"))
