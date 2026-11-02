@@ -22,6 +22,7 @@ pub mod locking;
 pub mod logging;
 pub mod model;
 pub mod msix;
+pub mod nested_shim;
 pub mod path_takeover;
 pub mod paths;
 pub mod redact;
@@ -73,6 +74,7 @@ pub use locking::{
 pub use logging::init_file_logging;
 pub use model::*;
 pub use msix::{enforce_msix_shim_policy, is_running_in_msix_package};
+pub use nested_shim::{nested_official_cli, SHIM_OWNER_PID_ENV};
 pub use path_takeover::{
     check_data_root_consistency, show_blocking_message, DataRootConsistency, PathTakeover,
     PathTakeoverReport,
