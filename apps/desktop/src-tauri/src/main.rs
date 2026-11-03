@@ -174,6 +174,53 @@ fn rollback_runtime(app: AppHandle, state: State<'_, DesktopState>) -> Result<Pa
     Ok(result)
 }
 
+/// The active runtime can change outside this process (`lpcctl`, a deploy). Shims
+/// pick that up on every call, so the desktop must not keep using its startup
+/// copy: a token issued by a newer CLI may be unusable by the older one. An active
+/// OAuth or App creation flow keeps its CLI; the next call retries the switch.
+fn follow_active_runtime(state: &DesktopState) {
+    let path = match state.store.load_state() {
+        Ok(store_state) => store_state.managed_cli_path,
+        Err(error) => {
+            tracing::warn!(%error, "cannot read the active CLI runtime");
+            return;
+        }
+    };
+    let Some(path) = path else {
+        return;
+    };
+    let Ok(mut services) = state.services.lock() else {
+        return;
+    };
+    if services.account.cli().executable() == path
+        || services.runtime_change_active
+        || services.app_creation_begins > 0
+        || services.app_creation.active_flow_count() > 0
+    {
+        return;
+    }
+    let idle = services
+        .auth
+        .try_lock()
+        .is_ok_and(|auth| auth.active_flow_count() == 0);
+    if !idle {
+        return;
+    }
+    let account = AccountService::new(state.store.clone(), OfficialCli::new(path.clone()));
+    let auth = match AuthCoordinator::new(account.clone()) {
+        Ok(auth) => Arc::new(Mutex::new(auth)),
+        Err(error) => {
+            tracing::warn!(%error, "cannot follow the active CLI runtime");
+            return;
+        }
+    };
+    let app_creation = AppCreationCoordinator::new(account.clone());
+    services.account = account;
+    services.auth = auth;
+    services.app_creation = app_creation;
+    tracing::info!(path = %path.display(), "desktop services now use the active CLI runtime");
+}
+
 fn begin_runtime_change(state: &DesktopState) -> Result<(), String> {
     let mut services = state
         .services
@@ -398,6 +445,7 @@ async fn import_existing_account_config(
     label: String,
     config_dir: PathBuf,
 ) -> Result<ExistingAccountImport, String> {
+    follow_active_runtime(&state);
     let account = state
         .services
         .lock()
@@ -501,6 +549,7 @@ async fn begin_account_login(
     state: State<'_, DesktopState>,
     app_ref: Uuid,
 ) -> Result<AuthFlowStart, String> {
+    follow_active_runtime(&state);
     let auth = {
         let services = state
             .services
@@ -525,6 +574,7 @@ async fn begin_reauthorization(
     state: State<'_, DesktopState>,
     account_id: Uuid,
 ) -> Result<AuthFlowStart, String> {
+    follow_active_runtime(&state);
     let auth = {
         let services = state
             .services
@@ -601,6 +651,7 @@ fn check_account(
     state: State<'_, DesktopState>,
     account_id: Uuid,
 ) -> Result<lpc_core::AccountRecord, String> {
+    follow_active_runtime(&state);
     let service = state
         .services
         .lock()
@@ -619,7 +670,7 @@ fn check_account(
             {
                 HealthRefreshOutcome::Updated(account) => Ok(account),
                 HealthRefreshOutcome::SkippedBusy(_) => {
-                    Err("钥匙串正被其他命令占用，这次没有改体检结果。稍后再试。".into())
+                    Err("官方 CLI 这次没有及时响应，没有改体检结果。稍后再试。".into())
                 }
             }
         }
@@ -1040,7 +1091,7 @@ fn main() {
                 .ok_or_else(|| std::io::Error::other("另一个数据目录的控制台正在使用界面，请先退出该控制台。"))?;
             let profile = webview_home.join("EBWebView");
             startup::clean_orphan_webviews(&profile, &webview_lock);
-            let window_watch = startup::watch_window_creation();
+            let window_watch = startup::watch_window_creation(!hidden);
             tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?.build()?;
             let _ = window_watch.send(());
             tracing::info!("desktop window initialized");
@@ -1067,11 +1118,8 @@ fn main() {
                 return Err(std::io::Error::other(error.to_string()).into());
             }
 
-            if let Err(error) = run_credential_backup(&paths, "startup") {
-                tracing::warn!(%error, "credential backup failed during startup");
-            }
-            // Explicit second pass: file backup also triggers keychain export, but
-            // make wipe detection loud at boot even if file backup is skipped.
+            // Keychain wipe detection stays loud at boot; the keychain export below
+            // is the credential backup that must exist before any command runs.
             match lpc_core::inspect_keychain() {
                 status if status.platform_supported && status.empty => {
                     tracing::error!(
@@ -1114,6 +1162,16 @@ fn main() {
             }
             start_host_bridge(paths.clone())
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
+            // Copying every file can take minutes on a busy machine, and no lark-cli
+            // command should wait for it.
+            {
+                let paths = paths.clone();
+                std::thread::spawn(move || {
+                    if let Err(error) = run_credential_backup(&paths, "startup") {
+                        tracing::warn!(%error, "credential backup failed during startup");
+                    }
+                });
+            }
             let cli = managed_cli(&store)
                 .unwrap_or_else(|_| OfficialCli::new(paths.runtime_dir().join("missing-lark-cli")));
             let account_service = AccountService::new(store.clone(), cli);
@@ -1201,6 +1259,7 @@ fn main() {
                 if let Err(error) = repair_managed_route(&state.store) {
                     tracing::error!(%error, "scheduled managed route repair failed");
                 }
+                follow_active_runtime(&state);
                 let service = match state.services.try_lock() {
                     Ok(services) => services.account.clone(),
                     Err(_) => {
@@ -1271,7 +1330,7 @@ fn main() {
                             tracing::warn!(
                                 account = %account_display_name(&account),
                                 account_id = %account.id,
-                                "scheduled health check skipped twice (keychain busy); leaving last_verified_at unchanged"
+                                "scheduled health check inconclusive twice; leaving last_verified_at unchanged"
                             );
                             stats.record(&account.health);
                         }

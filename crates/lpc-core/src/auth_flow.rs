@@ -1,5 +1,5 @@
 use crate::account::AccountService;
-use crate::cli::SecretString;
+use crate::cli::{LoginProcess, SecretString};
 use crate::error::{LpcError, Result};
 use crate::model::AccountRecord;
 use crate::scope::ScopeBatch;
@@ -9,10 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::PathBuf;
-use std::time::Duration;
 use uuid::Uuid;
-
-const AUTH_POLL_TIMEOUT: Duration = Duration::from_secs(6);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +50,7 @@ struct PendingFlow {
     verification_url: String,
     expires_in: u64,
     device_code: SecretString,
+    login: Option<LoginProcess>,
     created_at: DateTime<Utc>,
 }
 
@@ -174,6 +172,7 @@ impl AuthCoordinator {
                 verification_url: device.verification_url,
                 expires_in: device.expires_in,
                 device_code: SecretString::new(device.device_code),
+                login: None,
                 created_at,
             },
         );
@@ -183,30 +182,37 @@ impl AuthCoordinator {
     pub fn complete_current_batch(&mut self, flow_id: Uuid) -> Result<AuthProgress> {
         let flow = self
             .flows
-            .get(&flow_id)
+            .get_mut(&flow_id)
             .ok_or_else(|| LpcError::AuthFlowNotFound(flow_id.to_string()))?;
         if flow.is_expired_at(Utc::now()) {
-            let flow = self.flows.remove(&flow_id).expect("flow checked above");
-            self.cleanup_flow(&flow);
+            let mut flow = self.flows.remove(&flow_id).expect("flow checked above");
+            self.cleanup_flow(&mut flow);
             return Err(LpcError::AuthFlowExpired);
         }
-        match self.service.cli().complete_login_with_timeout(
-            &flow.batch_dir,
-            &flow.device_code,
-            AUTH_POLL_TIMEOUT,
-        ) {
-            Ok(_) => {
+        let result = (|| {
+            if flow.login.is_none() {
+                flow.login = Some(
+                    self.service
+                        .cli()
+                        .spawn_login(&flow.batch_dir, &flow.device_code)?,
+                );
+            }
+            flow.login.as_mut().expect("login started above").poll()
+        })();
+        match result {
+            Ok(Some(_)) => {
                 let mut flow = self.flows.remove(&flow_id).expect("flow checked above");
+                flow.login.take();
                 let result = self.complete_inner(&mut flow);
                 if result.is_err() {
-                    self.cleanup_flow(&flow);
+                    self.cleanup_flow(&mut flow);
                 }
                 result
             }
-            Err(LpcError::CliTimeout(_)) => Ok(pending_progress(flow)),
+            Ok(None) => Ok(pending_progress(flow)),
             Err(error) => {
-                let flow = self.flows.remove(&flow_id).expect("flow checked above");
-                self.cleanup_flow(&flow);
+                let mut flow = self.flows.remove(&flow_id).expect("flow checked above");
+                self.cleanup_flow(&mut flow);
                 Err(error)
             }
         }
@@ -301,11 +307,11 @@ impl AuthCoordinator {
     }
 
     pub fn cancel(&mut self, flow_id: Uuid) -> Result<()> {
-        let flow = self
+        let mut flow = self
             .flows
             .remove(&flow_id)
             .ok_or_else(|| LpcError::AuthFlowNotFound(flow_id.to_string()))?;
-        self.cleanup_flow(&flow);
+        self.cleanup_flow(&mut flow);
         Ok(())
     }
 
@@ -318,13 +324,14 @@ impl AuthCoordinator {
             .map(|(id, _)| *id)
             .collect();
         for id in expired {
-            if let Some(flow) = self.flows.remove(&id) {
-                self.cleanup_flow(&flow);
+            if let Some(mut flow) = self.flows.remove(&id) {
+                self.cleanup_flow(&mut flow);
             }
         }
     }
 
-    fn cleanup_flow(&self, flow: &PendingFlow) {
+    fn cleanup_flow(&self, flow: &mut PendingFlow) {
+        flow.login.take();
         let _ = fs::remove_dir_all(&flow.batch_dir);
         let _ = fs::remove_dir_all(&flow.canonical_dir);
     }
@@ -333,8 +340,8 @@ impl AuthCoordinator {
 impl Drop for AuthCoordinator {
     fn drop(&mut self) {
         let flows = std::mem::take(&mut self.flows);
-        for flow in flows.into_values() {
-            self.cleanup_flow(&flow);
+        for mut flow in flows.into_values() {
+            self.cleanup_flow(&mut flow);
         }
     }
 }
@@ -477,6 +484,7 @@ mod tests {
             verification_url: "https://example.com/device".into(),
             expires_in,
             device_code: SecretString::new("fixture-device-secret"),
+            login: None,
             created_at,
         }
     }

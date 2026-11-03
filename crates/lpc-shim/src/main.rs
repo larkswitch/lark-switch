@@ -1,8 +1,8 @@
 use lpc_core::{
     execute_via_host_bridge, inspect_host_keychain_view, is_running_in_msix_package,
     nested_official_cli, resolve_execution_override, run_host_bootstrap_task,
-    strip_leading_lpc_flags, try_acquire_cli_keychain_lock, AppPaths, KeychainViewKind, LpcError,
-    RoutingGate, StateStore, SHIM_OWNER_PID_ENV,
+    strip_leading_lpc_flags, try_acquire_shared_cli_keychain_lock, AppPaths, KeychainViewKind,
+    LpcError, RoutingGate, StateStore, SHIM_OWNER_PID_ENV,
 };
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -34,9 +34,9 @@ fn run() -> lpc_core::Result<i32> {
         return Ok(64);
     }
 
-    // The enclosing shim already passed every check below and blocks on this
-    // process while holding the lock and possibly the host bridge, so queuing
-    // for either would deadlock. An explicit account selects a different route.
+    // The enclosing shim already passed every check below and holds the lock while
+    // it waits for this process, so this call stays on its route. An explicit
+    // account selects a different route.
     if parsed.account_override.is_none() {
         if let Some(official) = nested_official_cli() {
             let status = Command::new(&official)
@@ -123,7 +123,9 @@ fn run() -> lpc_core::Result<i32> {
         return Err(LpcError::RuntimeRecursion);
     }
 
-    let keychain_lock = try_acquire_cli_keychain_lock(&paths, Duration::from_secs(30))?
+    // Other commands never make this wait. Only a short exclusive control-plane
+    // step can, and each CLI step it runs is itself limited to about a minute.
+    let keychain_lock = try_acquire_shared_cli_keychain_lock(&paths, Duration::from_secs(180))?
         .ok_or(LpcError::CliKeychainBusy)?;
 
     let mut command = Command::new(&managed);

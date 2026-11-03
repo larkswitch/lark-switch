@@ -104,7 +104,9 @@ pub fn clean_orphan_webviews(profile: &Path, _owner: &SingletonLock) {
 
 /// A stuck WebView must report an error instead of retaining an invisible host.
 /// Arm this only around window creation, before starting credential operations.
-pub fn watch_window_creation() -> std::sync::mpsc::Sender<()> {
+/// A hidden host has nobody to dismiss the error, and the next `lark-cli` call
+/// starts it again, so it just exits.
+pub fn watch_window_creation(show_error: bool) -> std::sync::mpsc::Sender<()> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         if matches!(
@@ -112,7 +114,9 @@ pub fn watch_window_creation() -> std::sync::mpsc::Sender<()> {
             Err(std::sync::mpsc::RecvTimeoutError::Timeout)
         ) {
             tracing::error!("desktop WebView initialization timed out");
-            lpc_core::show_blocking_message("larkswitch — 启动超时", "界面组件未能在 30 秒内启动。请检查安全软件的拦截记录，关闭此提示后重新打开 larkswitch。");
+            if show_error {
+                lpc_core::show_blocking_message("larkswitch — 启动超时", "界面组件未能在 30 秒内启动。请检查安全软件的拦截记录，关闭此提示后重新打开 larkswitch。");
+            }
             std::process::exit(1);
         }
     });

@@ -68,8 +68,9 @@ pub use keychain_watch::{
     observe_keychain_slots, KeychainWatchEvent, KeychainWatchKind,
 };
 pub use locking::{
-    cli_keychain_lock_path, try_acquire_cli_keychain_lock, CliKeychainGuard, ExecutionLease,
-    RouteSnapshot, RoutingGate, SingletonLock, CLI_KEYCHAIN_LOCK_NAME,
+    cli_keychain_lock_path, try_acquire_cli_keychain_lock, try_acquire_shared_cli_keychain_lock,
+    CliKeychainGuard, ExecutionLease, RouteSnapshot, RoutingGate, SingletonLock,
+    CLI_KEYCHAIN_LOCK_NAME,
 };
 pub use logging::init_file_logging;
 pub use model::*;
@@ -95,7 +96,7 @@ pub use selector::{
 pub use shim::{install_managed_shim, install_managed_shim_with, ShimInstallOptions};
 pub use store::StateStore;
 
-pub const SUPPORTED_CLI_VERSION: &str = "1.0.96";
+pub const SUPPORTED_CLI_VERSION: &str = "1.0.98";
 /// Recommended plus previously shipped versions still accepted at runtime.
-pub const SUPPORTED_CLI_VERSIONS: &[&str] = &["1.0.96", "1.0.86", "1.0.71", "1.0.68"];
+pub const SUPPORTED_CLI_VERSIONS: &[&str] = &["1.0.98", "1.0.96", "1.0.86", "1.0.71", "1.0.68"];
 pub const SCHEMA_VERSION: u32 = 1;

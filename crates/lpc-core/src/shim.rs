@@ -95,25 +95,29 @@ fn repair_global_npm_routes(shim: &Path, paths: &AppPaths) -> Result<()> {
         .join("bin")
         .join("lark-cli.exe");
     let shim_bytes = std::fs::read(shim)?;
+    let mut replaced = false;
     if direct_binary.is_file() {
-        backup_and_replace_npm_route(&direct_binary, &shim_bytes, paths)?;
+        replaced |= backup_and_replace_npm_route(&direct_binary, &shim_bytes, paths)?;
     }
-    backup_and_replace_npm_route(&npm_root.join("lark-cli.exe"), &shim_bytes, paths)?;
-    backup_and_replace_npm_route(&npm_root.join("lark-cli.cmd"), CMD_FORWARDER, paths)?;
-    backup_and_replace_npm_route(&npm_root.join("lark-cli.ps1"), POWERSHELL_FORWARDER, paths)?;
-    backup_and_replace_npm_route(&npm_root.join("lark-cli"), SHELL_FORWARDER, paths)?;
-    tracing::warn!(
-        target = %npm_root.display(),
-        "global npm lark-cli routes replaced with managed shim forwarders"
-    );
+    replaced |= backup_and_replace_npm_route(&npm_root.join("lark-cli.exe"), &shim_bytes, paths)?;
+    replaced |= backup_and_replace_npm_route(&npm_root.join("lark-cli.cmd"), CMD_FORWARDER, paths)?;
+    replaced |=
+        backup_and_replace_npm_route(&npm_root.join("lark-cli.ps1"), POWERSHELL_FORWARDER, paths)?;
+    replaced |= backup_and_replace_npm_route(&npm_root.join("lark-cli"), SHELL_FORWARDER, paths)?;
+    if replaced {
+        tracing::warn!(
+            target = %npm_root.display(),
+            "global npm lark-cli routes replaced with managed shim forwarders"
+        );
+    }
     Ok(())
 }
 
 #[cfg(windows)]
-fn backup_and_replace_npm_route(path: &Path, replacement: &[u8], paths: &AppPaths) -> Result<()> {
+fn backup_and_replace_npm_route(path: &Path, replacement: &[u8], paths: &AppPaths) -> Result<bool> {
     if let Ok(previous) = std::fs::read(path) {
         if previous == replacement {
-            return Ok(());
+            return Ok(false);
         }
         let digest = hex::encode(Sha256::digest(&previous));
         let file_name = path
@@ -126,7 +130,8 @@ fn backup_and_replace_npm_route(path: &Path, replacement: &[u8], paths: &AppPath
             .join(format!("npm-{file_name}-{}", &digest[..16]));
         write_if_changed(&backup, &previous)?;
     }
-    write_if_changed(path, replacement)
+    write_if_changed(path, replacement)?;
+    Ok(true)
 }
 
 #[cfg(windows)]

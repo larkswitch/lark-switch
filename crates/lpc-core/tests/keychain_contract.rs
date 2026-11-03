@@ -182,7 +182,7 @@ fn nested_shim_marker_is_only_published_while_the_keychain_lock_is_held() {
     let shim = std::fs::read_to_string(root.join("crates/lpc-shim/src/main.rs"))
         .expect("read lpc shim source");
     let lock = shim
-        .find("try_acquire_cli_keychain_lock(&paths")
+        .find("try_acquire_shared_cli_keychain_lock(&paths")
         .expect("keychain lock acquisition");
     let marker = shim
         .find(".env(SHIM_OWNER_PID_ENV")
@@ -358,8 +358,22 @@ fn control_plane_cli_checks_host_view_before_taking_the_keychain_lock() {
     let check = gate
         .find("crate::enforce_host_keychain_view(&paths)?")
         .unwrap();
-    let lock = gate.find("try_acquire_cli_keychain_lock(&paths").unwrap();
+    let lock = gate
+        .find("try_acquire_shared_cli_keychain_lock(&paths")
+        .unwrap();
     assert!(check < lock);
+    let exclusive_gate = source
+        .split("fn acquire_exclusive_core_cli_keychain_lock()")
+        .nth(1)
+        .unwrap();
+    assert!(
+        exclusive_gate
+            .find("crate::enforce_host_keychain_view(&paths)?")
+            .unwrap()
+            < exclusive_gate
+                .find("try_acquire_cli_keychain_lock(&paths")
+                .unwrap()
+    );
     for entry in [
         "pub fn run_interactive",
         "pub fn spawn_new_app_creation",
