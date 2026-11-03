@@ -1,4 +1,3 @@
-use crate::atomic::write_json_atomic;
 use crate::error::{LpcError, Result};
 use crate::model::{AccountRecord, AppRecord, ExecutionLeaseRecord};
 use crate::paths::AppPaths;
@@ -21,8 +20,15 @@ pub const CLI_KEYCHAIN_LOCK_NAME: &str = "cli-keychain";
 pub const ROUTING_GATE_TIMEOUT: Duration = Duration::from_secs(30);
 const GATE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Exclusive lock over the shared lark-cli Windows keychain registry hive.
-/// All managed lark-cli child processes must hold this for their lifetime.
+/// Reader/writer lock over the shared lark-cli keychain. All managed lark-cli
+/// child processes hold it for their lifetime.
+///
+/// Commands running in an account's own config dir take it shared: the official
+/// CLI already serializes each account's refresh with a cross-process lock in
+/// that dir, re-reads the token under it, and writes by compare-and-swap, while
+/// every keychain slot is an independent registry value. That lock lives in the
+/// config dir, so only a command verifying an existing identity from a different
+/// dir needs this lock exclusively.
 pub struct CliKeychainGuard {
     file: Option<File>,
     #[cfg(all(windows, not(test)))]
@@ -58,11 +64,28 @@ pub fn cli_keychain_lock_path(paths: &AppPaths) -> PathBuf {
         .join(format!("{CLI_KEYCHAIN_LOCK_NAME}.lock"))
 }
 
-/// Tries to acquire the shared keychain lock, polling until `timeout` elapses.
+/// Tries to acquire the keychain lock exclusively, polling until `timeout` elapses.
 /// Returns `Ok(None)` when another holder keeps the lock (busy, not an I/O error).
 pub fn try_acquire_cli_keychain_lock(
     paths: &AppPaths,
     timeout: Duration,
+) -> Result<Option<CliKeychainGuard>> {
+    acquire_cli_keychain_lock(paths, timeout, FileExt::try_lock_exclusive)
+}
+
+/// Tries to acquire the keychain lock alongside other shared holders. Only an
+/// exclusive holder makes this wait.
+pub fn try_acquire_shared_cli_keychain_lock(
+    paths: &AppPaths,
+    timeout: Duration,
+) -> Result<Option<CliKeychainGuard>> {
+    acquire_cli_keychain_lock(paths, timeout, FileExt::try_lock_shared)
+}
+
+fn acquire_cli_keychain_lock(
+    paths: &AppPaths,
+    timeout: Duration,
+    try_lock: impl Fn(&File) -> std::io::Result<()>,
 ) -> Result<Option<CliKeychainGuard>> {
     fs::create_dir_all(paths.locks_dir())?;
     let file = OpenOptions::new()
@@ -73,7 +96,7 @@ pub fn try_acquire_cli_keychain_lock(
         .open(cli_keychain_lock_path(paths))?;
     let deadline = Instant::now() + timeout;
     loop {
-        match FileExt::try_lock_exclusive(&file) {
+        match try_lock(&file) {
             Ok(()) => {
                 #[cfg(all(windows, not(test)))]
                 let keychain_stamp = crate::keychain_guard::keychain_write_stamp()?;
@@ -241,8 +264,12 @@ impl RoutingGate {
         store: &StateStore,
         account_override: Option<&str>,
     ) -> Result<(RouteSnapshot, ExecutionLease)> {
+        // Every lark-cli call passes through here one at a time, so nothing slow
+        // may run under the gate: listing processes takes hundreds of milliseconds
+        // on Windows and would turn a burst of commands into a gate timeout. Paths
+        // that read leases clean up orphans themselves.
+        let process_started_at = current_process_started_at();
         let _guard = self.lock()?;
-        self.cleanup_orphans_locked()?;
         let state = store.load_state()?;
         let catalog = store.load_catalog()?;
         let (account, app) =
@@ -273,7 +300,7 @@ impl RoutingGate {
         if !managed_cli_path.is_file() {
             return Err(LpcError::RuntimeMissing(managed_cli_path));
         }
-        let lease = ExecutionLease::create(&self.paths, &account, &app)?;
+        let lease = ExecutionLease::create(&self.paths, &account, &app, process_started_at)?;
         Ok((
             RouteSnapshot {
                 account,
@@ -405,18 +432,26 @@ impl RoutingGate {
     }
 }
 
+fn current_process_started_at() -> u64 {
+    let pid = Pid::from_u32(std::process::id());
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::Some(&[pid]));
+    system
+        .process(pid)
+        .map(|process| process.start_time())
+        .unwrap_or(0)
+}
+
 impl ExecutionLease {
-    fn create(paths: &AppPaths, account: &AccountRecord, app: &AppRecord) -> Result<Self> {
+    fn create(
+        paths: &AppPaths,
+        account: &AccountRecord,
+        app: &AppRecord,
+        process_started_at: u64,
+    ) -> Result<Self> {
         fs::create_dir_all(paths.leases_dir())?;
         let id = Uuid::new_v4();
         let pid = std::process::id();
-        let process_pid = Pid::from_u32(pid);
-        let mut system = System::new();
-        system.refresh_processes(ProcessesToUpdate::Some(&[process_pid]));
-        let process_started_at = system
-            .process(process_pid)
-            .map(|process| process.start_time())
-            .unwrap_or(0);
         let record = ExecutionLeaseRecord {
             id,
             pid,
@@ -426,7 +461,11 @@ impl ExecutionLease {
             created_at: Utc::now(),
         };
         let path = paths.leases_dir().join(format!("{id}.json"));
-        write_json_atomic(&path, &record)?;
+        // Only this process' lifetime depends on this file, and a lease that a crash
+        // leaves damaged counts as an orphan. Syncing it under the gate would make
+        // concurrent commands queue on the disk.
+        // lpc-allow-raw-write: readers and this writer are serialized by the routing gate.
+        fs::write(&path, serde_json::to_vec(&record)?)?;
         Ok(Self {
             path,
             record,
@@ -476,6 +515,33 @@ mod tests {
             .unwrap()
             .expect("lock should be reusable after drop");
         drop(third);
+    }
+
+    #[test]
+    fn shared_holders_coexist_and_only_exclude_an_exclusive_holder() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = AppPaths::new(temp.path().join("lpc"));
+        let wait = Duration::from_millis(100);
+
+        let first = try_acquire_shared_cli_keychain_lock(&paths, wait)
+            .unwrap()
+            .expect("first shared holder");
+        let second = try_acquire_shared_cli_keychain_lock(&paths, wait)
+            .unwrap()
+            .expect("shared holders must not wait for each other");
+        assert!(try_acquire_cli_keychain_lock(&paths, wait)
+            .unwrap()
+            .is_none());
+
+        drop(first);
+        drop(second);
+        let exclusive = try_acquire_cli_keychain_lock(&paths, wait)
+            .unwrap()
+            .expect("exclusive after every shared holder left");
+        assert!(try_acquire_shared_cli_keychain_lock(&paths, wait)
+            .unwrap()
+            .is_none());
+        drop(exclusive);
     }
 
     #[test]

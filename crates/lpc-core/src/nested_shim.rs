@@ -2,10 +2,9 @@
 //!
 //! The official CLI spawns children that call `lark-cli` again: `apps +init`
 //! runs `git`, and `git` runs `lark-cli apps git-credential-helper`. The outer
-//! shim holds the exclusive keychain lock and blocks until those children exit,
-//! and on Windows it may also occupy the host bridge. A nested shim that queues
-//! for either one can never make progress, so it must run on the outer shim's
-//! route instead.
+//! shim holds the keychain lock until those children exit, so the child already
+//! has that protection. It must also stay on the outer shim's route: a tray switch
+//! between the two calls must not hand the child a different identity.
 //!
 //! The environment variable only names a candidate. It is inherited by anything
 //! the CLI spawns and can be set by anyone, so authority comes from the real

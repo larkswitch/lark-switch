@@ -13,8 +13,9 @@ host unminimize and show its existing window. Hidden launches remain hidden.
 Only the exclusive desktop owner may stop leftover msedgewebview2 processes,
 and only when their user-data-dir exactly matches this application's WebView
 profile. It does this before creating its own WebView. No profile files are
-deleted. Window initialization has a 30-second timeout with a visible error;
-credential operations have not started at that point. Task Scheduler calls have
+deleted. Window initialization has a 30-second timeout, with a visible error
+unless the launch is hidden (a hidden host exits, and the next `lark-cli` call
+starts it again); credential operations have not started at that point. Task Scheduler calls have
 a 20-second timeout and failures are logged and shown rather than swallowed.
 
 The replacement on-demand tasks are `LarkSwitch Desktop Host v2` and

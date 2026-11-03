@@ -1,7 +1,7 @@
 use crate::error::{LpcError, Result};
-#[cfg(not(test))]
-use crate::locking::try_acquire_cli_keychain_lock;
 use crate::locking::{release_cli_keychain_lock_when_process_exits, CliKeychainGuard};
+#[cfg(not(test))]
+use crate::locking::{try_acquire_cli_keychain_lock, try_acquire_shared_cli_keychain_lock};
 use crate::model::Brand;
 #[cfg(not(test))]
 use crate::paths::AppPaths;
@@ -78,6 +78,7 @@ impl Drop for SecretString {
 pub struct OfficialCli {
     executable: PathBuf,
     timeout: Duration,
+    exclusive_keychain: bool,
 }
 
 #[derive(Debug)]
@@ -85,6 +86,89 @@ pub struct ProcessOutput {
     pub status: ExitStatus,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
+}
+
+/// One device-code exchange, retained across UI polls. Killing and restarting
+/// this command can lose credentials after the server consumes the device code.
+pub(crate) struct LoginProcess {
+    child: Child,
+    stdout: Option<thread::JoinHandle<std::io::Result<Vec<u8>>>>,
+    stderr: Option<thread::JoinHandle<std::io::Result<Vec<u8>>>>,
+    keychain_lock: Option<CliKeychainGuard>,
+}
+
+impl LoginProcess {
+    fn new(mut child: Child, lock: CliKeychainGuard) -> Self {
+        fn reader(
+            mut pipe: impl Read + Send + 'static,
+        ) -> thread::JoinHandle<std::io::Result<Vec<u8>>> {
+            thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let mut buffer = [0; 8192];
+                loop {
+                    let count = pipe.read(&mut buffer)?;
+                    if count == 0 {
+                        break;
+                    }
+                    let keep = count.min((1024 * 1024usize).saturating_sub(bytes.len()));
+                    bytes.extend_from_slice(&buffer[..keep]);
+                }
+                Ok(bytes)
+            })
+        }
+        let stdout = Some(reader(child.stdout.take().expect("login stdout is piped")));
+        let stderr = Some(reader(child.stderr.take().expect("login stderr is piped")));
+        Self {
+            child,
+            stdout,
+            stderr,
+            keychain_lock: Some(lock),
+        }
+    }
+
+    pub(crate) fn poll(&mut self) -> Result<Option<CliJson<Value>>> {
+        let Some(status) = self.child.try_wait()? else {
+            return Ok(None);
+        };
+        // Release before the coordinator runs whoami/status on this account.
+        self.keychain_lock.take();
+        fn finish(
+            reader: &mut Option<thread::JoinHandle<std::io::Result<Vec<u8>>>>,
+        ) -> Result<Vec<u8>> {
+            reader
+                .take()
+                .ok_or_else(|| LpcError::Internal("login output already consumed".into()))?
+                .join()
+                .map_err(|_| LpcError::Internal("login output reader panicked".into()))?
+                .map_err(Into::into)
+        }
+        parse_json_output(ProcessOutput {
+            status,
+            stdout: finish(&mut self.stdout)?,
+            stderr: finish(&mut self.stderr)?,
+        })
+        .map(Some)
+    }
+
+    fn stop(&mut self) {
+        if !matches!(self.child.try_wait(), Ok(Some(_))) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+        self.keychain_lock.take();
+        for reader in [&mut self.stdout, &mut self.stderr] {
+            if let Some(reader) = reader.take() {
+                let _ = reader.join();
+            }
+        }
+    }
+}
+
+impl Drop for LoginProcess {
+    fn drop(&mut self) {
+        // Cancel/expiry must stop the writer before staging directories disappear.
+        self.stop();
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -242,11 +326,19 @@ impl OfficialCli {
         Self {
             executable: executable.into(),
             timeout: Duration::from_secs(60),
+            exclusive_keychain: false,
         }
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// For commands that may refresh an existing identity from a config dir other
+    /// than its own, where the official per-dir refresh lock cannot see them.
+    pub fn with_exclusive_keychain(mut self) -> Self {
+        self.exclusive_keychain = true;
         self
     }
 
@@ -357,6 +449,32 @@ impl OfficialCli {
         device_code: &SecretString,
     ) -> Result<CliJson<Value>> {
         self.complete_login_with_timeout(config_dir, device_code, Duration::from_secs(660))
+    }
+
+    pub(crate) fn spawn_login(
+        &self,
+        config_dir: &Path,
+        device_code: &SecretString,
+    ) -> Result<LoginProcess> {
+        if !self.executable.is_file() {
+            return Err(LpcError::RuntimeMissing(self.executable.clone()));
+        }
+        let lock = acquire_core_cli_keychain_lock()?;
+        let mut command = Command::new(&self.executable);
+        command.args([
+            "auth",
+            "login",
+            "--device-code",
+            &String::from_utf8_lossy(device_code.expose_bytes()),
+            "--json",
+        ]);
+        configure_account_command(&mut command, config_dir);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        configure_background_command(&mut command);
+        Ok(LoginProcess::new(command.spawn()?, lock))
     }
 
     pub fn complete_login_with_timeout(
@@ -509,7 +627,11 @@ impl OfficialCli {
         if !self.executable.is_file() {
             return Err(LpcError::RuntimeMissing(self.executable.clone()));
         }
-        let _lock = acquire_core_cli_keychain_lock()?;
+        let _lock = if self.exclusive_keychain {
+            acquire_exclusive_core_cli_keychain_lock()?
+        } else {
+            acquire_core_cli_keychain_lock()?
+        };
         let mut command = Command::new(&self.executable);
         command.args(args);
         if let Some(current_dir) = current_dir {
@@ -556,6 +678,11 @@ impl OfficialCli {
         let status = match child.wait_timeout(timeout)? {
             Some(status) => status,
             None => {
+                // Must fire before the official CLI gives up on its own (60s from
+                // when its refresh starts, which is after this timer started). A
+                // refresh it abandons after sending the request deletes the token,
+                // even if the server never rotated it; a killed one keeps the token
+                // for the next attempt.
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(LpcError::CliTimeout(timeout.as_secs()));
@@ -589,7 +716,22 @@ fn acquire_core_cli_keychain_lock() -> Result<CliKeychainGuard> {
         // Control-plane callers (including lpcctl health checks and OAuth)
         // bypass the shim. They must not refresh a second, shadow token copy.
         crate::enforce_host_keychain_view(&paths)?;
-        try_acquire_cli_keychain_lock(&paths, Duration::from_secs(5))?
+        try_acquire_shared_cli_keychain_lock(&paths, Duration::from_secs(5))?
+            .ok_or(LpcError::CliKeychainBusy)
+    }
+}
+
+fn acquire_exclusive_core_cli_keychain_lock() -> Result<CliKeychainGuard> {
+    #[cfg(test)]
+    {
+        Ok(CliKeychainGuard::noop_for_tests())
+    }
+
+    #[cfg(not(test))]
+    {
+        let paths = AppPaths::discover()?;
+        crate::enforce_host_keychain_view(&paths)?;
+        try_acquire_cli_keychain_lock(&paths, Duration::from_secs(30))?
             .ok_or(LpcError::CliKeychainBusy)
     }
 }
@@ -666,6 +808,62 @@ fn ensure_success(output: &ProcessOutput) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    fn delayed_login(seconds: u64) -> super::LoginProcess {
+        let mut command = std::process::Command::new("powershell.exe");
+        command
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!("Start-Sleep -Seconds {seconds}; [Console]::WriteLine('{{}}')"),
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        super::configure_background_command(&mut command);
+        super::LoginProcess::new(
+            command.spawn().unwrap(),
+            super::acquire_core_cli_keychain_lock().unwrap(),
+        )
+    }
+
+    #[test]
+    fn default_timeout_stops_a_stalled_refresh_before_the_official_cli_clears_it() {
+        let official_refresh_deadline = std::time::Duration::from_secs(60);
+        assert!(super::OfficialCli::new("lark-cli").timeout <= official_refresh_deadline);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn login_survives_six_second_poll_boundary_and_returns_same_process_result() {
+        let mut login = delayed_login(7);
+        let pid = login.child.id();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            assert_eq!(login.child.id(), pid);
+            if let Some(output) = login.poll().unwrap() {
+                assert_eq!(output.value, serde_json::json!({}));
+                assert!(login.keychain_lock.is_none());
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cancelling_login_reaps_child_and_releases_lock() {
+        let mut login = delayed_login(30);
+        assert!(login.poll().unwrap().is_none());
+        login.stop();
+        assert!(login.child.try_wait().unwrap().is_some());
+        assert!(login.keychain_lock.is_none());
+        assert!(login.stdout.is_none());
+        assert!(login.stderr.is_none());
+    }
+
     #[test]
     fn account_command_removes_ambient_workspace_signals() {
         let mut command = std::process::Command::new("unused");

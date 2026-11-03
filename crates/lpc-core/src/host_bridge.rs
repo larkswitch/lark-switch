@@ -10,6 +10,20 @@ use crate::paths::AppPaths;
 use serde::{Deserialize, Serialize};
 
 const PROTOCOL_VERSION: u32 = 3;
+/// A shim the bridge starts should run the command itself. If it decides it cannot
+/// and forwards again, each hop starts another shim, and because requests run
+/// concurrently that never ends by itself. A nested command with an explicit
+/// account legitimately takes a second hop.
+const MAX_BRIDGE_HOPS: u32 = 3;
+const BRIDGE_HOPS_ENV: &str = "LPC_HOST_BRIDGE_HOPS";
+/// The most processes the host and everything it starts may run at once, enforced
+/// by Windows. Normal heavy use is a few hundred (a shim and an official CLI per
+/// command). Whatever goes wrong, process creation then fails instead of the machine.
+#[cfg(windows)]
+const MAX_HOST_PROCESSES: u32 = 1024;
+/// Lowers the limit, never raises it; tests use it to keep their own tree small.
+#[cfg(windows)]
+const HOST_PROCESS_LIMIT_ENV: &str = "LPC_HOST_PROCESS_LIMIT";
 #[cfg(any(windows, test))]
 const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
 #[cfg(windows)]
@@ -33,6 +47,8 @@ struct HostBridgeRequest {
     args: Vec<String>,
     stdin_utf8: Option<String>,
     current_dir: std::path::PathBuf,
+    #[serde(default)]
+    hops: u32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -63,15 +79,27 @@ pub(crate) fn is_host_bridge_child() -> bool {
     );
     let actual_parent = system.process(current).and_then(|process| process.parent());
     let Some(parent) = system.process(expected) else {
+        eprintln!("[LPC_HOST_CHECK] expected executor {expected_pid} is not visible");
         return false;
     };
     let installed =
         crate::expected_installed_desktop_exe().and_then(|path| path.canonicalize().ok());
     let parent_exe = parent.exe().and_then(|path| path.canonicalize().ok());
-    actual_parent == Some(expected)
+    let bootstrapped = parent.cmd().iter().any(|arg| arg == "--host-bootstrap");
+    let trusted = actual_parent == Some(expected)
         && installed.is_some()
         && parent_exe == installed
-        && parent.cmd().iter().any(|arg| arg == "--host-bootstrap")
+        && bootstrapped;
+    if !trusted {
+        eprintln!(
+            "[LPC_HOST_CHECK] parent_matches={} exe_readable={} exe_matches={} bootstrap_flag={}",
+            actual_parent == Some(expected),
+            parent_exe.is_some(),
+            installed.is_some() && parent_exe == installed,
+            bootstrapped,
+        );
+    }
+    trusted
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -127,7 +155,17 @@ fn execute_target(
         args,
         stdin_utf8,
         current_dir: std::env::current_dir()?,
+        hops: std::env::var(BRIDGE_HOPS_ENV)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0),
     };
+    if request.hops >= MAX_BRIDGE_HOPS {
+        return Err(LpcError::HostBridgeUnavailable(format!(
+            "LPC_HOST_BRIDGE_LOOP: this command was already forwarded {} times; refusing to forward again",
+            request.hops
+        )));
+    }
     match platform::execute(paths, request.clone()) {
         Err(LpcError::HostBridgeUnavailable(_)) if target == HostBridgeTarget::Control => {
             crate::run_host_bootstrap_task()?;
@@ -236,7 +274,7 @@ mod platform {
     use std::process::{Command, Stdio};
     use std::ptr;
     use windows_sys::Win32::Foundation::{
-        ERROR_PIPE_CONNECTED, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
+        ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
     };
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, FlushFileBuffers, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
@@ -248,8 +286,10 @@ mod platform {
     };
 
     const CONNECT_TIMEOUT_MS: u32 = 5_000;
+    const OUTPUT_DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
     pub(super) fn start(paths: AppPaths) -> Result<()> {
+        cap_process_tree()?;
         // Create the first instance synchronously so desktop startup cannot claim
         // the bridge is ready when the pipe name or platform setup is invalid.
         let first = create_pipe(&paths)?;
@@ -260,27 +300,87 @@ mod platform {
         Ok(())
     }
 
+    /// Puts this process, and so everything it starts, in a job that Windows stops
+    /// from growing past the limit. Not kill-on-close: a running command may be
+    /// rotating a token and must outlive the host.
+    fn cap_process_tree() -> Result<()> {
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
+        };
+        use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+        let limit = std::env::var(HOST_PROCESS_LIMIT_ENV)
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .map_or(MAX_HOST_PROCESSES, |value| {
+                value.clamp(1, MAX_HOST_PROCESSES)
+            });
+        let fail = |step: &str| {
+            LpcError::HostBridgeUnavailable(format!(
+                "cannot cap the host process tree ({step}): {}",
+                std::io::Error::last_os_error()
+            ))
+        };
+        unsafe {
+            let job = CreateJobObjectW(ptr::null(), ptr::null());
+            if job.is_null() {
+                return Err(fail("create"));
+            }
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+            info.BasicLimitInformation.ActiveProcessLimit = limit;
+            if SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const _,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            ) == 0
+            {
+                return Err(fail("limit"));
+            }
+            if AssignProcessToJobObject(job, GetCurrentProcess()) == 0 {
+                return Err(fail("assign"));
+            }
+            // The handle stays open for the life of the process, and so does the job.
+        }
+        tracing::info!(limit, "host process tree capped");
+        Ok(())
+    }
+
+    /// Each request runs on its own thread, and the next pipe instance is listening
+    /// before that thread starts, so a long command never holds up another one.
     fn serve(paths: AppPaths, mut pipe: File) {
         tracing::info!("host CLI bridge started");
         loop {
-            if let Err(error) = serve_one(&paths, &mut pipe) {
-                tracing::warn!(%error, "host CLI bridge request failed");
-            }
-            unsafe {
-                let _ = FlushFileBuffers(pipe.as_raw_handle());
-                let _ = DisconnectNamedPipe(pipe.as_raw_handle());
-            }
-            match create_pipe(&paths) {
-                Ok(next) => pipe = next,
-                Err(error) => {
-                    tracing::error!(%error, "host CLI bridge stopped");
-                    return;
+            let connected = wait_for_client(&pipe);
+            let next = loop {
+                match create_pipe(&paths) {
+                    Ok(next) => break next,
+                    Err(error) => {
+                        tracing::error!(%error, "host CLI bridge cannot create a pipe instance");
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                    }
                 }
+            };
+            let current = std::mem::replace(&mut pipe, next);
+            match connected {
+                Ok(()) => {
+                    let request_paths = paths.clone();
+                    if let Err(error) = std::thread::Builder::new()
+                        .name("larkswitch-host-bridge-request".into())
+                        .spawn(move || serve_connected(&request_paths, current))
+                    {
+                        tracing::error!(%error, "host CLI bridge cannot start a request thread");
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "host CLI bridge connection failed"),
             }
         }
     }
 
-    fn serve_one(paths: &AppPaths, pipe: &mut File) -> Result<()> {
+    fn wait_for_client(pipe: &File) -> Result<()> {
         let connected = unsafe { ConnectNamedPipe(pipe.as_raw_handle(), ptr::null_mut()) };
         if connected == 0 {
             let error = std::io::Error::last_os_error();
@@ -288,13 +388,46 @@ mod platform {
                 return Err(error.into());
             }
         }
+        Ok(())
+    }
 
+    fn serve_connected(paths: &AppPaths, mut pipe: File) {
+        if let Err(error) = serve_one(paths, &mut pipe) {
+            tracing::warn!(%error, "host CLI bridge request failed");
+        }
+        unsafe {
+            let _ = FlushFileBuffers(pipe.as_raw_handle());
+            let _ = DisconnectNamedPipe(pipe.as_raw_handle());
+        }
+    }
+
+    fn serve_one(paths: &AppPaths, pipe: &mut File) -> Result<()> {
         let request: HostBridgeRequest = decode_frame(pipe)?;
         if request.version != PROTOCOL_VERSION {
             return Err(LpcError::HostBridgeUnavailable(format!(
                 "unsupported host bridge protocol {}",
                 request.version
             )));
+        }
+
+        if request.hops >= MAX_BRIDGE_HOPS {
+            tracing::error!(
+                hops = request.hops,
+                "host CLI bridge refused a forwarding loop"
+            );
+            let response = HostBridgeResponse {
+                exit_code: 70,
+                stdout: String::new(),
+                stderr: format!(
+                    "[LPC_HOST_BRIDGE_LOOP] the command was forwarded {} times without running; the verified host check keeps failing
+",
+                    request.hops
+                ),
+            };
+            // lpc-allow-raw-write: framed bytes go to an ephemeral named pipe, not persistent state.
+            pipe.write_all(&encode_frame(&response)?)?;
+            pipe.flush()?;
+            return Ok(());
         }
 
         let shim = paths.bin_dir().join(match request.target {
@@ -307,6 +440,7 @@ mod platform {
             .args(&request.args)
             .current_dir(&request.current_dir)
             .env("LPC_HOST_EXECUTOR_PID", std::process::id().to_string())
+            .env(BRIDGE_HOPS_ENV, (request.hops + 1).to_string())
             .env("LPC_HOME", paths.root())
             .stdin(if request.stdin_utf8.is_some() {
                 Stdio::piped()
@@ -334,6 +468,9 @@ mod platform {
         Ok(())
     }
 
+    /// Finishes when the command exits, not when its output pipes close: a daemon
+    /// the command starts (`event consume` starts `event _bus`) inherits them and
+    /// can keep them open long after the command has finished.
     fn run_child(
         mut command: Command,
         stdin_utf8: Option<String>,
@@ -346,7 +483,48 @@ mod platform {
                 .ok_or_else(|| std::io::Error::other("host bridge child stdin was not piped"))?;
             stdin.write_all(stdin_utf8.as_bytes())?;
         }
-        child.wait_with_output()
+        let (done, drained) = std::sync::mpsc::channel();
+        let stdout = collect_output(child.stdout.take(), done.clone());
+        let stderr = collect_output(child.stderr.take(), done);
+        let status = child.wait()?;
+        let deadline = std::time::Instant::now() + OUTPUT_DRAIN_GRACE;
+        for _ in 0..2 {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if drained.recv_timeout(remaining).is_err() {
+                break;
+            }
+        }
+        let take = |output: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>| {
+            output.lock().map(|bytes| bytes.clone()).unwrap_or_default()
+        };
+        Ok(std::process::Output {
+            status,
+            stdout: take(&stdout),
+            stderr: take(&stderr),
+        })
+    }
+
+    fn collect_output(
+        pipe: Option<impl std::io::Read + Send + 'static>,
+        done: std::sync::mpsc::Sender<()>,
+    ) -> std::sync::Arc<std::sync::Mutex<Vec<u8>>> {
+        let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let collected = output.clone();
+        std::thread::spawn(move || {
+            if let Some(mut pipe) = pipe {
+                let mut buffer = [0; 8192];
+                while let Ok(count) = pipe.read(&mut buffer) {
+                    if count == 0 {
+                        break;
+                    }
+                    if let Ok(mut bytes) = collected.lock() {
+                        bytes.extend_from_slice(&buffer[..count]);
+                    }
+                }
+            }
+            let _ = done.send(());
+        });
+        output
     }
 
     fn create_pipe(paths: &AppPaths) -> Result<File> {
@@ -376,28 +554,38 @@ mod platform {
         request: HostBridgeRequest,
     ) -> Result<HostBridgeResponse> {
         let name = wide(&pipe_name(paths));
-        if unsafe { WaitNamedPipeW(name.as_ptr(), CONNECT_TIMEOUT_MS) } == 0 {
-            return Err(LpcError::HostBridgeUnavailable(format!(
-                "the larkswitch desktop host is not reachable: {}",
-                std::io::Error::last_os_error()
-            )));
-        }
-        let handle = unsafe {
-            CreateFileW(
-                name.as_ptr(),
-                GENERIC_READ | GENERIC_WRITE,
-                0,
-                ptr::null(),
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                ptr::null_mut(),
-            )
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_millis(u64::from(CONNECT_TIMEOUT_MS));
+        let handle = loop {
+            if unsafe { WaitNamedPipeW(name.as_ptr(), CONNECT_TIMEOUT_MS) } == 0 {
+                return Err(LpcError::HostBridgeUnavailable(format!(
+                    "the larkswitch desktop host is not reachable: {}",
+                    std::io::Error::last_os_error()
+                )));
+            }
+            let handle = unsafe {
+                CreateFileW(
+                    name.as_ptr(),
+                    GENERIC_READ | GENERIC_WRITE,
+                    0,
+                    ptr::null(),
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    ptr::null_mut(),
+                )
+            };
+            if handle != INVALID_HANDLE_VALUE {
+                break handle;
+            }
+            let error = std::io::Error::last_os_error();
+            // Another client can take the free instance between the wait and the
+            // open; the server is already publishing the next one.
+            if error.raw_os_error() != Some(ERROR_PIPE_BUSY as i32)
+                || std::time::Instant::now() >= deadline
+            {
+                return Err(LpcError::HostBridgeUnavailable(error.to_string()));
+            }
         };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(LpcError::HostBridgeUnavailable(
-                std::io::Error::last_os_error().to_string(),
-            ));
-        }
         let mut pipe = unsafe { File::from_raw_handle(handle as _) };
         // lpc-allow-raw-write: framed bytes go to an ephemeral named pipe, not persistent state.
         pipe.write_all(&encode_frame(&request)?)?;
@@ -456,6 +644,7 @@ mod tests {
             args: vec!["--lpc-account".into(), "道庸".into(), "whoami".into()],
             stdin_utf8: Some("{\"中文\":true}\n".into()),
             current_dir: std::path::PathBuf::from("workspace"),
+            hops: 1,
         };
         let frame = encode_frame(&request).unwrap();
         let decoded: HostBridgeRequest = decode_frame(&mut frame.as_slice()).unwrap();
@@ -464,6 +653,7 @@ mod tests {
         assert_eq!(decoded.stdin_utf8, request.stdin_utf8);
         assert_eq!(decoded.target, request.target);
         assert_eq!(decoded.current_dir, request.current_dir);
+        assert_eq!(decoded.hops, request.hops);
     }
 
     #[test]
@@ -506,6 +696,156 @@ mod tests {
         let paths = AppPaths::new(r"C:\Users\Example\LPC");
         assert_eq!(pipe_name(&paths), pipe_name(&paths));
         assert_ne!(pipe_name(&paths), pipe_name(&AppPaths::new(r"C:\Other")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn slow_commands_run_side_by_side_and_a_burst_all_gets_through() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = AppPaths::new(temp.path().join("lpc"));
+        std::fs::create_dir_all(paths.bin_dir()).unwrap();
+        let system = std::env::var_os("SystemRoot").unwrap();
+        std::fs::copy(
+            std::path::Path::new(&system).join(r"System32\PING.EXE"),
+            paths.bin_dir().join("lark-cli.exe"),
+        )
+        .unwrap();
+        platform::start(paths.clone()).unwrap();
+
+        let run_all = |count: usize, pings: &str| {
+            let handles: Vec<_> = (0..count)
+                .map(|_| {
+                    let paths = paths.clone();
+                    let args: Vec<String> = ["-n", pings, "127.0.0.1"]
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect();
+                    std::thread::spawn(move || {
+                        platform::execute(
+                            &paths,
+                            HostBridgeRequest {
+                                version: PROTOCOL_VERSION,
+                                target: HostBridgeTarget::OfficialCli,
+                                args,
+                                stdin_utf8: None,
+                                current_dir: std::env::temp_dir(),
+                                hops: 0,
+                            },
+                        )
+                    })
+                })
+                .collect();
+            for handle in handles {
+                assert_eq!(handle.join().unwrap().unwrap().exit_code, 0);
+            }
+        };
+
+        // Each takes about 3s, so serving them one at a time would take about 12s.
+        let started = std::time::Instant::now();
+        run_all(4, "4");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(8),
+            "slow commands were serialized: {:?}",
+            started.elapsed()
+        );
+
+        run_all(40, "1");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_daemon_holding_the_output_pipes_does_not_hold_up_the_response() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = AppPaths::new(temp.path().join("lpc"));
+        std::fs::create_dir_all(paths.bin_dir()).unwrap();
+        let system = std::env::var_os("SystemRoot").unwrap();
+        std::fs::copy(
+            std::path::Path::new(&system).join("System32/cmd.exe"),
+            paths.bin_dir().join("lark-cli.exe"),
+        )
+        .unwrap();
+        platform::start(paths.clone()).unwrap();
+
+        let started = std::time::Instant::now();
+        let response = platform::execute(
+            &paths,
+            HostBridgeRequest {
+                version: PROTOCOL_VERSION,
+                target: HostBridgeTarget::OfficialCli,
+                args: [
+                    "/c",
+                    "start",
+                    "/b",
+                    "ping",
+                    "-n",
+                    "30",
+                    "127.0.0.1",
+                    "&",
+                    "echo",
+                    "finished",
+                ]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+                stdin_utf8: None,
+                current_dir: std::env::temp_dir(),
+                hops: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(response.exit_code, 0);
+        assert!(response.stdout.contains("finished"), "{}", response.stdout);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "waited for the daemon: {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// A shim that always forwards again: `lark-cli.exe` here is a script host that
+    /// re-enters the bridge would be needed to loop for real, so this pins the
+    /// server-side limit and that each hop tells the next one its count.
+    #[cfg(windows)]
+    #[test]
+    fn forwarding_stops_at_the_hop_limit_without_starting_a_process() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = AppPaths::new(temp.path().join("lpc"));
+        std::fs::create_dir_all(paths.bin_dir()).unwrap();
+        let system = std::env::var_os("SystemRoot").unwrap();
+        std::fs::copy(
+            std::path::Path::new(&system).join("System32/cmd.exe"),
+            paths.bin_dir().join("lark-cli.exe"),
+        )
+        .unwrap();
+        platform::start(paths.clone()).unwrap();
+        let request = |hops, args: &[&str]| HostBridgeRequest {
+            version: PROTOCOL_VERSION,
+            target: HostBridgeTarget::OfficialCli,
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+            stdin_utf8: None,
+            current_dir: std::env::temp_dir(),
+            hops,
+        };
+
+        let forwarded = platform::execute(
+            &paths,
+            request(1, &["/c", "echo", "%LPC_HOST_BRIDGE_HOPS%"]),
+        )
+        .unwrap();
+        assert_eq!(forwarded.exit_code, 0);
+        assert_eq!(forwarded.stdout.trim(), "2");
+
+        let marker = temp.path().join("ran");
+        let command = format!("echo ran>\"{}\"", marker.display());
+        let refused =
+            platform::execute(&paths, request(MAX_BRIDGE_HOPS, &["/c", command.as_str()])).unwrap();
+        assert_eq!(refused.exit_code, 70);
+        assert!(
+            refused.stderr.contains("LPC_HOST_BRIDGE_LOOP"),
+            "{}",
+            refused.stderr
+        );
+        assert!(!marker.exists());
     }
 
     #[cfg(windows)]

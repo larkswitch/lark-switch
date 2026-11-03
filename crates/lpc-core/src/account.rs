@@ -213,14 +213,17 @@ impl AccountService {
         fs::create_dir_all(&staging)?;
         let result = (|| {
             write_json_atomic(&staging.join("config.json"), &isolated_account)?;
-            let scopes = self.cli.scopes(&staging)?.value;
+            // This identity may already be an account whose commands refresh it
+            // from its own config dir, out of sight of this dir's refresh lock.
+            let cli = self.cli.clone().with_exclusive_keychain();
+            let scopes = cli.scopes(&staging)?.value;
             if scopes.app_id != identity.app_id || scopes.token_type != "user" {
                 return Err(LpcError::UnsafeConfig(
                     "existing CLI scope identity does not match its config".into(),
                 ));
             }
 
-            let whoami = self.cli.whoami(&staging)?.value;
+            let whoami = cli.whoami(&staging)?.value;
             let delegated = verified_delegated_user(&whoami)?;
             if whoami.app_id != identity.app_id || delegated.open_id != identity.user_open_id {
                 return Err(LpcError::AuthIdentityMismatch {
@@ -229,7 +232,7 @@ impl AccountService {
                 });
             }
 
-            let status = self.cli.status(&staging, true)?.value;
+            let status = cli.status(&staging, true)?.value;
             let user = &status.identities.user;
             if !user.available
                 || (status.verified != Some(true) && user.verified != Some(true))
@@ -745,8 +748,11 @@ impl AccountService {
             return Err(status.expect_err("matched keychain view error"));
         }
         if status.as_ref().err().is_some_and(should_skip_health_update) {
-            // A business command holds the shared CLI keychain lock. Skip this
-            // round entirely: health and last_verified_at stay untouched.
+            // The check reached no conclusion. Skip this round entirely: health
+            // and last_verified_at stay untouched.
+            if let Some(error) = status.as_ref().err() {
+                tracing::warn!(account_id = %account_id, error = %crate::redact::redact_text(&error.to_string()), "account health check inconclusive");
+            }
             let account = self
                 .store
                 .load_catalog()?
@@ -1235,10 +1241,10 @@ pub fn needs_verify(
     expires.signed_duration_since(now) <= VERIFY_LEAD_TIME
 }
 
-/// Scheduled health refresh must not mark an account unhealthy when the shared
-/// CLI keychain lock is merely held by a concurrent business command.
+/// Health refresh must not mark an account unhealthy when the check says nothing
+/// about the account: the keychain lock is busy, or the CLI did not answer in time.
 fn should_skip_health_update(error: &LpcError) -> bool {
-    matches!(error, LpcError::CliKeychainBusy)
+    matches!(error, LpcError::CliKeychainBusy | LpcError::CliTimeout(_))
 }
 
 fn map_identity_status_to_health(user: &IdentityStatus) -> AccountHealth {
@@ -1310,7 +1316,7 @@ mod tests {
         // `refresh_account_health_with` returns SkippedBusy (no catalog write)
         // when it says skip.
         assert!(should_skip_health_update(&LpcError::CliKeychainBusy));
-        assert!(!should_skip_health_update(&LpcError::CliTimeout(60)));
+        assert!(should_skip_health_update(&LpcError::CliTimeout(60)));
         assert!(!should_skip_health_update(&LpcError::CliFailed {
             code: 1,
             message: "boom".into(),
