@@ -7,6 +7,8 @@
 //! the one still running, or gets back the result that never reached its caller.
 //! A send whose result was delivered is never replayed: sending the same text again
 //! afterwards is a new message.
+// Only the Windows host serves the bridge; elsewhere the journal is test-only.
+#![cfg_attr(not(windows), allow(dead_code))]
 
 use crate::host_bridge::HostBridgeResponse;
 use sha2::{Digest, Sha256};
