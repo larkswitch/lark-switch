@@ -49,6 +49,9 @@ struct HostBridgeRequest {
     current_dir: std::path::PathBuf,
     #[serde(default)]
     hops: u32,
+    /// Who is sending, so the host can recognize a retry of the same send.
+    #[serde(default)]
+    caller: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -159,6 +162,14 @@ fn execute_target(
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(0),
+        caller: None,
+    };
+    let request = HostBridgeRequest {
+        caller: (target == HostBridgeTarget::OfficialCli
+            && crate::send_outcome::is_message_send(&request.args))
+        .then(crate::send_outcome::caller_identity)
+        .flatten(),
+        ..request
     };
     if request.hops >= MAX_BRIDGE_HOPS {
         return Err(LpcError::HostBridgeUnavailable(format!(
@@ -289,6 +300,7 @@ mod platform {
     const OUTPUT_DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
     pub(super) fn start(paths: AppPaths) -> Result<()> {
+        restore_normal_priority();
         cap_process_tree()?;
         // Create the first instance synchronously so desktop startup cannot claim
         // the bridge is ready when the pipe name or platform setup is invalid.
@@ -298,6 +310,55 @@ mod platform {
             .spawn(move || serve(paths, first))
             .map_err(|error| LpcError::HostBridgeUnavailable(error.to_string()))?;
         Ok(())
+    }
+
+    /// Task Scheduler starts the host at its default priority 7: below-normal CPU,
+    /// low I/O and low memory priority, and every process the host starts inherits
+    /// them. Each `lark-cli` call from an agent shell runs as such a process, so
+    /// when the machine is busy it is starved for seconds while the caller waits.
+    /// Commands run on behalf of an interactive caller, so they get normal priority.
+    pub(super) fn restore_normal_priority() {
+        use windows_sys::Win32::System::Threading::{
+            GetCurrentProcess, ProcessMemoryPriority, SetPriorityClass, SetProcessInformation,
+            MEMORY_PRIORITY_INFORMATION, MEMORY_PRIORITY_NORMAL, NORMAL_PRIORITY_CLASS,
+        };
+        #[link(name = "ntdll")]
+        extern "system" {
+            fn NtSetInformationProcess(
+                process: windows_sys::Win32::Foundation::HANDLE,
+                class: u32,
+                information: *const std::ffi::c_void,
+                length: u32,
+            ) -> i32;
+        }
+        const PROCESS_IO_PRIORITY: u32 = 33;
+        const IO_PRIORITY_NORMAL: u32 = 2;
+
+        unsafe {
+            let process = GetCurrentProcess();
+            let cpu = SetPriorityClass(process, NORMAL_PRIORITY_CLASS) != 0;
+            let memory = MEMORY_PRIORITY_INFORMATION {
+                MemoryPriority: MEMORY_PRIORITY_NORMAL,
+            };
+            let memory = SetProcessInformation(
+                process,
+                ProcessMemoryPriority,
+                &memory as *const _ as *const _,
+                std::mem::size_of::<MEMORY_PRIORITY_INFORMATION>() as u32,
+            ) != 0;
+            let io = NtSetInformationProcess(
+                process,
+                PROCESS_IO_PRIORITY,
+                &IO_PRIORITY_NORMAL as *const _ as *const _,
+                4,
+            ) >= 0;
+            if cpu && memory && io {
+                tracing::info!("host priority set to normal");
+            } else {
+                // Commands still run, only slower under load.
+                tracing::warn!(cpu, memory, io, "host priority could not be fully restored");
+            }
+        }
     }
 
     /// Puts this process, and so everything it starts, in a job that Windows stops
@@ -430,6 +491,67 @@ mod platform {
             return Ok(());
         }
 
+        let send_key = request
+            .caller
+            .as_deref()
+            .filter(|_| {
+                request.target == HostBridgeTarget::OfficialCli
+                    && crate::send_outcome::is_message_send(&request.args)
+            })
+            .map(|caller| {
+                let route = crate::store::StateStore::new(paths.clone())
+                    .load_state()
+                    .ok()
+                    .and_then(|state| state.active_account_id)
+                    .map(|id| id.to_string())
+                    .unwrap_or_default();
+                crate::send_outcome::send_key(
+                    caller,
+                    &route,
+                    &request.current_dir,
+                    &request.args,
+                    request.stdin_utf8.as_deref(),
+                )
+            });
+        if let Some(key) = &send_key {
+            if let crate::send_outcome::Begin::Replay(response) = SEND_JOURNAL.begin(key) {
+                tracing::info!(
+                    message_id = crate::send_outcome::message_id(&response.stdout),
+                    "host CLI bridge answered a send retry with the earlier result"
+                );
+                return deliver(pipe, &response);
+            }
+        }
+        let response = run_request(paths, &request);
+        let Some(key) = send_key else {
+            return deliver(pipe, &response);
+        };
+        let delivered = deliver(pipe, &response);
+        if delivered.is_err() {
+            tracing::warn!(
+                exit_code = response.exit_code,
+                message_id = crate::send_outcome::message_id(&response.stdout),
+                "send finished after its caller left; a retry gets this result"
+            );
+        }
+        SEND_JOURNAL.finish(&key, &response, delivered.is_ok());
+        delivered
+    }
+
+    static SEND_JOURNAL: std::sync::LazyLock<crate::send_outcome::SendJournal> =
+        std::sync::LazyLock::new(Default::default);
+
+    /// Succeeds only once the client has read the whole response.
+    fn deliver(pipe: &mut File, response: &HostBridgeResponse) -> Result<()> {
+        // lpc-allow-raw-write: framed bytes go to an ephemeral named pipe, not persistent state.
+        pipe.write_all(&encode_frame(response)?)?;
+        if unsafe { FlushFileBuffers(pipe.as_raw_handle()) } == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(())
+    }
+
+    fn run_request(paths: &AppPaths, request: &HostBridgeRequest) -> HostBridgeResponse {
         let shim = paths.bin_dir().join(match request.target {
             HostBridgeTarget::OfficialCli => "lark-cli.exe",
             HostBridgeTarget::Control => "lpcctl.exe",
@@ -449,7 +571,7 @@ mod platform {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let response = match run_child(command, request.stdin_utf8) {
+        let response = match run_child(command, request.stdin_utf8.clone()) {
             Ok(output) => HostBridgeResponse {
                 exit_code: output.status.code().unwrap_or(1),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -462,10 +584,7 @@ mod platform {
             },
         };
         tracing::info!(target = ?request.target, exit_code = response.exit_code, "host CLI bridge request completed");
-        // lpc-allow-raw-write: framed bytes go to an ephemeral named pipe, not persistent state.
-        pipe.write_all(&encode_frame(&response)?)?;
-        pipe.flush()?;
-        Ok(())
+        response
     }
 
     /// Finishes when the command exits, not when its output pipes close: a daemon
@@ -645,6 +764,7 @@ mod tests {
             stdin_utf8: Some("{\"中文\":true}\n".into()),
             current_dir: std::path::PathBuf::from("workspace"),
             hops: 1,
+            caller: Some("42:7".into()),
         };
         let frame = encode_frame(&request).unwrap();
         let decoded: HostBridgeRequest = decode_frame(&mut frame.as_slice()).unwrap();
@@ -654,6 +774,72 @@ mod tests {
         assert_eq!(decoded.target, request.target);
         assert_eq!(decoded.current_dir, request.current_dir);
         assert_eq!(decoded.hops, request.hops);
+        assert_eq!(decoded.caller, request.caller);
+    }
+
+    #[test]
+    fn a_request_from_an_older_client_has_no_caller() {
+        let old = br#"{"version":3,"target":"OfficialCli","args":["im","+messages-send"],"stdin_utf8":null,"current_dir":"w","hops":0}"#;
+        let request: HostBridgeRequest = serde_json::from_slice(old).unwrap();
+        assert_eq!(request.caller, None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn host_and_the_commands_it_starts_run_at_normal_priority() {
+        use windows_sys::Win32::System::Threading::*;
+        #[link(name = "ntdll")]
+        extern "system" {
+            fn NtQueryInformationProcess(
+                process: windows_sys::Win32::Foundation::HANDLE,
+                class: u32,
+                information: *mut std::ffi::c_void,
+                length: u32,
+                returned: *mut u32,
+            ) -> i32;
+        }
+        let priorities = |process| unsafe {
+            let mut memory = MEMORY_PRIORITY_INFORMATION { MemoryPriority: 0 };
+            GetProcessInformation(
+                process,
+                ProcessMemoryPriority,
+                &mut memory as *mut _ as *mut _,
+                std::mem::size_of::<MEMORY_PRIORITY_INFORMATION>() as u32,
+            );
+            let mut io = 0_u32;
+            let mut returned = 0;
+            NtQueryInformationProcess(process, 33, &mut io as *mut _ as *mut _, 4, &mut returned);
+            (GetPriorityClass(process), memory.MemoryPriority, io)
+        };
+        unsafe {
+            // What Task Scheduler gives the host.
+            SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+            let low = MEMORY_PRIORITY_INFORMATION {
+                MemoryPriority: MEMORY_PRIORITY_LOW,
+            };
+            SetProcessInformation(
+                GetCurrentProcess(),
+                ProcessMemoryPriority,
+                &low as *const _ as *const _,
+                std::mem::size_of::<MEMORY_PRIORITY_INFORMATION>() as u32,
+            );
+        }
+        assert_eq!(
+            priorities(unsafe { GetCurrentProcess() }).0,
+            BELOW_NORMAL_PRIORITY_CLASS
+        );
+        platform::restore_normal_priority();
+        let expected = (NORMAL_PRIORITY_CLASS, MEMORY_PRIORITY_NORMAL, 2);
+        assert_eq!(priorities(unsafe { GetCurrentProcess() }), expected);
+
+        use std::os::windows::io::AsRawHandle;
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/c", "ping -n 2 127.0.0.1 >nul"])
+            .spawn()
+            .unwrap();
+        let inherited = priorities(child.as_raw_handle() as _);
+        child.wait().unwrap();
+        assert_eq!(inherited, expected);
     }
 
     #[test]
@@ -730,6 +916,7 @@ mod tests {
                                 stdin_utf8: None,
                                 current_dir: std::env::temp_dir(),
                                 hops: 0,
+                                caller: None,
                             },
                         )
                     })
@@ -790,6 +977,7 @@ mod tests {
                 stdin_utf8: None,
                 current_dir: std::env::temp_dir(),
                 hops: 0,
+                caller: None,
             },
         )
         .unwrap();
@@ -825,6 +1013,7 @@ mod tests {
             stdin_utf8: None,
             current_dir: std::env::temp_dir(),
             hops,
+            caller: None,
         };
 
         let forwarded = platform::execute(

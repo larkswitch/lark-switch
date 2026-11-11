@@ -95,7 +95,7 @@ fn host_bootstrap_task_script(exe: &Path) -> String {
          $hiddenAction=New-ScheduledTaskAction -Execute '{}' -Argument '--hidden --host-bootstrap';\
          $visibleAction=New-ScheduledTaskAction -Execute '{}' -Argument '--host-bootstrap';\
          $principal=New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited;\
-         $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries;\
+         $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Priority 4;\
          Register-ScheduledTask -TaskName '{}' -Action $hiddenAction -Principal $principal -Settings $settings -Force | Out-Null;\
          Register-ScheduledTask -TaskName '{}' -Action $visibleAction -Principal $principal -Settings $settings -Force | Out-Null",
         powershell_literal(&exe.to_string_lossy()),
@@ -107,7 +107,8 @@ fn host_bootstrap_task_script(exe: &Path) -> String {
 
 /// Register an on-demand Task Scheduler entry which launches the installed app
 /// outside the caller's inherited registry virtualization. It has no trigger;
-/// the existing Run entry remains the user's autostart preference.
+/// the existing Run entry remains the user's autostart preference. Priority 4
+/// is Task Scheduler's normal priority; its default, 7, is below normal.
 #[cfg(windows)]
 pub fn pin_host_bootstrap_task(exe: &Path) -> Result<()> {
     use std::os::windows::process::CommandExt;
@@ -348,6 +349,8 @@ mod tests {
         assert!(script.contains("-Argument '--host-bootstrap'"));
         assert!(script.contains(VISIBLE_HOST_BOOTSTRAP_TASK_NAME));
         assert!(!script.contains("New-ScheduledTaskTrigger"));
+        // The default, 7, runs the host and every command it starts below normal.
+        assert!(script.contains("-Priority 4;"));
     }
 
     #[cfg(windows)]

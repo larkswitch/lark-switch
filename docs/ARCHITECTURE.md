@@ -73,6 +73,23 @@ does not use localhost TCP, does not expose a token service, and does not copy a
 credential into the caller's registry view. If the desktop is not running, the
 shim fails closed with `LPC_HOST_BRIDGE_UNAVAILABLE`.
 
+The bootstrap task starts the host at Task Scheduler's default priority 7,
+which Windows maps to below-normal CPU, low memory priority, and low I/O
+priority. Every command the host starts inherits that priority. On a busy
+machine, the bridge threads and their CLI children were then starved for
+seconds per call. The host now resets itself to normal priority before it
+opens the pipe.
+
+A message send (`im +messages-send`, `im +messages-reply`) carries the
+caller's process identity. The host keeps the outcome of each send. A caller
+killed by its own timeout does not stop the send, so a retry of the same send
+from the same caller does not run it again. If the earlier run is still in
+progress, the retry waits for it. If the earlier run finished but its result
+never reached the caller, the retry gets that result, including the
+`message_id`, and stderr carries `LPC_SEND_REPLAYED`. An undelivered result is
+kept for 15 minutes. A send whose result was delivered is forgotten, so
+sending the same text again on purpose still sends.
+
 ## App and account lifecycle
 
 The sanitized App base config is accepted only when `appSecret` is an explicit official keychain reference tied to `appsecret:<App ID>`. Plaintext secret configs are rejected.
