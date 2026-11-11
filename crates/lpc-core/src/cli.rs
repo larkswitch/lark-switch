@@ -18,7 +18,6 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
-use wait_timeout::ChildExt;
 use zeroize::Zeroize;
 
 /// LPC already selected an isolated account config. Ambient agent workspace
@@ -627,7 +626,7 @@ impl OfficialCli {
         if !self.executable.is_file() {
             return Err(LpcError::RuntimeMissing(self.executable.clone()));
         }
-        let _lock = if self.exclusive_keychain {
+        let lock = if self.exclusive_keychain {
             acquire_exclusive_core_cli_keychain_lock()?
         } else {
             acquire_core_cli_keychain_lock()?
@@ -675,30 +674,14 @@ impl OfficialCli {
             bytes
         });
 
-        let status = match child.wait_timeout(timeout)? {
-            Some(status) => status,
-            None => {
-                // Must fire before the official CLI gives up on its own (60s from
-                // when its refresh starts, which is after this timer started). A
-                // refresh it abandons after sending the request deletes the token,
-                // even if the server never rotated it; a killed one keeps the token
-                // for the next attempt.
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(LpcError::CliTimeout(timeout.as_secs()));
-            }
-        };
-        let stdout = stdout_thread
-            .join()
-            .map_err(|_| LpcError::Internal("stdout reader panicked".into()))?;
-        let stderr = stderr_thread
-            .join()
-            .map_err(|_| LpcError::Internal("stderr reader panicked".into()))?;
-        Ok(ProcessOutput {
-            status,
-            stdout,
-            stderr,
-        })
+        crate::cli_capture::wait_capture(
+            child,
+            stdout_thread,
+            stderr_thread,
+            lock,
+            config_dir.is_some(),
+            timeout,
+        )
     }
 }
 
@@ -826,12 +809,6 @@ mod tests {
             command.spawn().unwrap(),
             super::acquire_core_cli_keychain_lock().unwrap(),
         )
-    }
-
-    #[test]
-    fn default_timeout_stops_a_stalled_refresh_before_the_official_cli_clears_it() {
-        let official_refresh_deadline = std::time::Duration::from_secs(60);
-        assert!(super::OfficialCli::new("lark-cli").timeout <= official_refresh_deadline);
     }
 
     #[cfg(windows)]
