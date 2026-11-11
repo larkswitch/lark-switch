@@ -11,6 +11,7 @@ pub mod auth_flow;
 pub mod autostart;
 pub mod backup;
 pub mod cli;
+mod cli_capture;
 pub mod consistency;
 pub mod diagnostics;
 pub mod error;
